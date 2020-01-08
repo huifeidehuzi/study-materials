@@ -2,8 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/../service-finance-order/service-finance-order.iml" filepath="$PROJECT_DIR$/../service-finance-order/service-finance-order.iml" />
-      <module fileurl="file://$PROJECT_DIR$/study-materials.iml" filepath="$PROJECT_DIR$/study-materials.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/Java资料.iml" filepath="$PROJECT_DIR$/.idea/Java资料.iml" />
     </modules>
   </component>
 </project>
