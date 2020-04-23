@@ -90,6 +90,20 @@ zuul:
 
 使用url配置，路径为：http://localhost:8080/user/**
 使用serviceId，路径为：：http://localhost:8080/user-service/user/**
+
+继承ZuulFilter（抽象类），实现了IZuulFilter接口
+1.filterType 过滤类型，pre 在路由前过滤 ，route在路由时过滤，post在route和eror后调用，error异常错误时调用
+2.filterOrder 过滤器执行顺序（权重），0-N  0最先执行
+3.shouldFilter 是否执行过滤器（可以根据业务需求做不同过滤逻辑）
+4.run RequestContext.getCurrentContext()（当前上下文）
+setSendZuulResponse(false)设置为过滤请求但不路由
+
+zuul降级：
+实现FallbackProvider接口，该接口继承了ZuulFallbackProvider
+主要实现方法：
+getRoute：返回服务id(单个服务降级)或者返回null 或者*（这俩表示所有服务需要降级）
+fallbackResponse  : 降级处理且返回降级信息
+降级流程： zuul在转发请求时最终会利用AbstractRibbonCommand(servceid路由)进行处理，AbstractRibbonCommand继承了HystrixCommand，所以真正转发请求的业务逻辑是在重写HystrixCommand类的run方法中进行的，run方法异常会自动调用getFallback()方法，执行降级处理：1.首先会判断是否实现了自定义的降级处理zuulFallbackProvider，实现了就调用自己的j降级处理方法fallbackResponse(),反之调用父类(HystrixCommand)的getFallback()方法（此方法会抛出异常）
 ```
 
 ## 熔断
@@ -128,4 +142,14 @@ hystrix:
 
 //单个服务并发请求数（信号量）
 服务名.execution.isolation.semaphore.maxConcurrentRequests:100
+
+原理:
+使用aop切面拦截所有请求,正常返回结果,异常调用fallback()方法降级
+HystrixCircuitBreakerConfiguration：定义了bean HystrixCommandAspect
+HystrixCommandAspect：定义了2个切面,只要使用了@HystrixCommand或者@HystrixCollapser就会被拦截(两个注解不能同时使用,不然会抛异常)
+拦截方法:methodsAnnotatedWithHystrixCommand()
+拦截所有方法,判断是否实现了上述2个注解,同时使用会抛异常
+
+@EnableHystrix开启熔断器
+@EnableHystrix 中调用了@EnableCircuitBreaker,  而@EnableCircuitBreaker中 import了EnableCircuitBreakerImportSelector(主要工作是导入熔断器配置,判断熔断器是否开启)
 ```
