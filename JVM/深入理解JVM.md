@@ -137,7 +137,7 @@ jvm通过索引定位局部变量表中的变量，范围为：0~最大槽数量
 
 1. 句柄访问：堆中会划分出一块内存来存储句柄（句柄池），reference存储的就是对象的句柄地址，该句柄中包含了对象实例数据与类型数据的具体地址信息
 
-   ![image-20200915151634516](https://github.com/huifeidehuzi/images/blob/master/data/image-20200915151634516.png)
+   ![image-20200915151634516](https://imgchr.com/i/0r93CT)
 
 2. 指针访问：reference存储的就是对象的地址，减少了一次指针定位的开销，jvm主要使用这种方式访问对象
 
