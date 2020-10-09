@@ -137,11 +137,11 @@ jvm通过索引定位局部变量表中的变量，范围为：0~最大槽数量
 
 1. 句柄访问：堆中会划分出一块内存来存储句柄（句柄池），reference存储的就是对象的句柄地址，该句柄中包含了对象实例数据与类型数据的具体地址信息
 
-   ![image-20200915151634516](https://imgchr.com/i/0r93CT)
+   ![image-20200915151634516](https://s1.ax1x.com/2020/10/09/0r93CT.png)
 
 2. 指针访问：reference存储的就是对象的地址，减少了一次指针定位的开销，jvm主要使用这种方式访问对象
 
-   ![image-20200915151646892](https://github.com/huifeidehuzi/images/blob/master/data/image-20200915151646892.png)
+   ![image-20200915151646892](https://s1.ax1x.com/2020/10/09/0r9l5V.png)
 
 
 
@@ -301,7 +301,7 @@ OutOfMemoryError: Metaspace
 
 通过一系列”GC Roots“根对象作为起始点，从这些节点往下搜索，搜索过程中走过的路径为”引用链“，如果某个对象与"GC Roots"没有引用链，则此对象为GC可回收对象
 
-![image-20200917113825958](https://github.com/huifeidehuzi/images/blob/master/data/image-20200917113825958.png)
+![image-20200917113825958](https://s1.ax1x.com/2020/10/09/0r9QU0.png)
 
 如图：就算object5、6、7之间持有引用，但是与”GC Roots”没有引用链相连，那么这3个对象为可回收对象
 
@@ -446,7 +446,7 @@ System.out.println(softReference.get()); //null，被回收了
 
 基于标记-复制算法单线程回收垃圾，在回收垃圾时，需要STW停止用户线程直到垃圾回收完成
 
-![image-20200921093551639](https://github.com/huifeidehuzi/images/blob/master/data/image-20200921093527662.png)
+![image-20200921093551639](https://s1.ax1x.com/2020/10/09/0r9nDs.png)
 
 ###### ParNew
 
@@ -456,7 +456,7 @@ System.out.println(softReference.get()); //null，被回收了
 
 ParNew默认开启的GC线程是CPU核心数，可通过用-XX：ParallelGCThreads参数调整GC线程数量
 
-![image-20200921093608927](https://github.com/huifeidehuzi/images/blob/master/data/image-20200921093608927.png)
+![image-20200921093608927](https://s1.ax1x.com/2020/10/09/0r9tKJ.png)
 
 
 
@@ -473,7 +473,7 @@ Parallel Scavenge的目标是尽可能达到一个可控制的吞吐量，也就
 
 此外，它还提供了+UseAdaptiveSizePolicy参数，如果设置为开启，那么就不需要我们来手动调节新生代的大小、eden和S1、S2的比例、晋升老年代的对象大小等参数，它会自动根据运行情况收集的监控信息调节最合适的停顿时间（吞吐量）
 
-![image-20200921093608927](https://github.com/huifeidehuzi/images/blob/master/data/image-20200921093647578.png)
+![image-20200921093608927](https://s1.ax1x.com/2020/10/09/0r9dV1.png)
 
 
 
@@ -483,13 +483,13 @@ Parallel Scavenge的目标是尽可能达到一个可控制的吞吐量，也就
 
 基于标记-整理算法的单线程回收器，GC时也会STW
 
-![image-20200921093527662](https://github.com/huifeidehuzi/images/blob/master/data/image-20200921093527662.png)
+![image-20200921093527662](https://s1.ax1x.com/2020/10/09/0r9nDs.png)
 
 ###### Parallel Old
 
 基于标记-整理算法的多线程回收器，注重吞吐量可以使用Parallel Old+Parallel Scavenge的搭配使用
 
-![image-20200921093647578](https://github.com/huifeidehuzi/images/blob/master/data/image-20200921093647578.png)
+![image-20200921093647578](https://s1.ax1x.com/2020/10/09/0r9dV1.png)
 
 ###### CMS
 
@@ -502,7 +502,7 @@ Parallel Scavenge的目标是尽可能达到一个可控制的吞吐量，也就
 
 
 
-![image-20200921105742475](https://github.com/huifeidehuzi/images/blob/master/data/image-20200921105742475.png)
+![image-20200921105742475](https://s1.ax1x.com/2020/10/09/0r9056.png)
 
 CMS也有它的缺点，分别如下：
 
@@ -527,7 +527,7 @@ G1的回收步骤大致也分为如下：
 3. 最终标记：并发标记结束后，对SATB记录做可达性分析，标记可回收对象，此操作会STW
 4. 筛选回收：对每个Region的最大收益进行排序，根据用户设定的停顿时间来指定回收计划，构成回收集，然后把存活的Region内的对象复制到空闲的Region中，最后回收掉垃圾对象。此操作会STW，多线程回收
 
-![image-20200921172213842](https://github.com/huifeidehuzi/images/blob/master/data/image-20200921172213842.png)
+![image-20200921172213842](https://s1.ax1x.com/2020/10/09/0r9DPK.png)
 
 
 
@@ -541,7 +541,7 @@ G1的回收步骤大致也分为如下：
 
 
 
-![image-20200921093713794](https://github.com/huifeidehuzi/images/blob/master/data/image-20200921093713794.png)
+![image-20200921093713794](https://s1.ax1x.com/2020/10/09/0r9UbR.png)
 
 Serial ---------------CMS和Serial Old
 
@@ -686,7 +686,7 @@ Heap
 
 一个类型（类/接口等，下同）被加载到jvm内存中到卸载出内存，整个生命周期为：**加载->验证->准备->解析->初始化->使用->卸载。其中验证->准备->解析统称为“链接”**
 
-![image-20200923151557257](https://github.com/huifeidehuzi/images/blob/master/data/image-20200923151557257.png)
+![image-20200923151557257](https://s1.ax1x.com/2020/10/09/0r9wUx.png)
 
 ​	
 
@@ -810,7 +810,7 @@ Heap
 
 java内存模型规定了所有变量都存储在**主内存**中，每个线程都有自己的**工作内存**，工作内存中保存了被该线程使用的变量的主内存副本，线程对变量的所有操作都必须在工作内存中进行，不同线程之间无法访问对方工作内存中的内容，线程之间的变量值传递需要通过主内存来完成
 
-![image-20200927144203381](https://github.com/huifeidehuzi/images/blob/master/data/image-20200927144203381.png)
+![image-20200927144203381](https://s1.ax1x.com/2020/10/09/0r9r8O.png)
 
 
 
@@ -863,5 +863,5 @@ java定义了6种线程状态，分别是：
 5. 阻塞（Blocked）：程序进入同步区域时会被阻塞
 6. 结束（Terminated）：线程已执行结束
 
-![image-20201009165603078](https://github.com/huifeidehuzi/images/blob/master/data/image-20201009165603078.png)
+![image-20201009165603078](https://s1.ax1x.com/2020/10/09/0r9s2D.png)
 
