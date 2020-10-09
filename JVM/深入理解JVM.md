@@ -141,7 +141,7 @@ jvm通过索引定位局部变量表中的变量，范围为：0~最大槽数量
 
 2. 指针访问：reference存储的就是对象的地址，减少了一次指针定位的开销，jvm主要使用这种方式访问对象
 
-   ![image-20200915151646892](/Users/zhangjianfeng/Library/Application Support/typora-user-images/image-20200915151646892.png)
+   ![image-20200915151646892](https://github.com/huifeidehuzi/images/blob/master/data/image-20200915151646892.png)
 
 
 
@@ -301,7 +301,7 @@ OutOfMemoryError: Metaspace
 
 通过一系列”GC Roots“根对象作为起始点，从这些节点往下搜索，搜索过程中走过的路径为”引用链“，如果某个对象与"GC Roots"没有引用链，则此对象为GC可回收对象
 
-![image-20200917113825958](/Users/zhangjianfeng/Library/Application Support/typora-user-images/image-20200917113825958.png)
+![image-20200917113825958](https://github.com/huifeidehuzi/images/blob/master/data/image-20200917113825958.png)
 
 如图：就算object5、6、7之间持有引用，但是与”GC Roots”没有引用链相连，那么这3个对象为可回收对象
 
@@ -446,7 +446,7 @@ System.out.println(softReference.get()); //null，被回收了
 
 基于标记-复制算法单线程回收垃圾，在回收垃圾时，需要STW停止用户线程直到垃圾回收完成
 
-![image-20200921093551639](/Users/zhangjianfeng/Library/Application Support/typora-user-images/image-20200921093551639.png)
+![image-20200921093551639](https://github.com/huifeidehuzi/images/blob/master/data/image-20200921093527662.png)
 
 ###### ParNew
 
@@ -456,7 +456,7 @@ System.out.println(softReference.get()); //null，被回收了
 
 ParNew默认开启的GC线程是CPU核心数，可通过用-XX：ParallelGCThreads参数调整GC线程数量
 
-![image-20200921093608927](/Users/zhangjianfeng/Library/Application Support/typora-user-images/image-20200921093608927.png)
+![image-20200921093608927](https://github.com/huifeidehuzi/images/blob/master/data/image-20200921093608927.png)
 
 
 
@@ -473,6 +473,8 @@ Parallel Scavenge的目标是尽可能达到一个可控制的吞吐量，也就
 
 此外，它还提供了+UseAdaptiveSizePolicy参数，如果设置为开启，那么就不需要我们来手动调节新生代的大小、eden和S1、S2的比例、晋升老年代的对象大小等参数，它会自动根据运行情况收集的监控信息调节最合适的停顿时间（吞吐量）
 
+![image-20200921093608927](https://github.com/huifeidehuzi/images/blob/master/data/image-20200921093647578.png)
+
 
 
 ##### 老年代回收器
@@ -481,13 +483,13 @@ Parallel Scavenge的目标是尽可能达到一个可控制的吞吐量，也就
 
 基于标记-整理算法的单线程回收器，GC时也会STW
 
-![image-20200921093527662](/Users/zhangjianfeng/Library/Application Support/typora-user-images/image-20200921093527662.png)
+![image-20200921093527662](https://github.com/huifeidehuzi/images/blob/master/data/image-20200921093527662.png)
 
 ###### Parallel Old
 
 基于标记-整理算法的多线程回收器，注重吞吐量可以使用Parallel Old+Parallel Scavenge的搭配使用
 
-![image-20200921093647578](/Users/zhangjianfeng/Library/Application Support/typora-user-images/image-20200921093647578.png)
+![image-20200921093647578](https://github.com/huifeidehuzi/images/blob/master/data/image-20200921093647578.png)
 
 ###### CMS
 
@@ -500,7 +502,7 @@ Parallel Scavenge的目标是尽可能达到一个可控制的吞吐量，也就
 
 
 
-![image-20200921105742475](/Users/zhangjianfeng/Library/Application Support/typora-user-images/image-20200921105742475.png)
+![image-20200921105742475](https://github.com/huifeidehuzi/images/blob/master/data/image-20200921105742475.png)
 
 CMS也有它的缺点，分别如下：
 
@@ -525,7 +527,7 @@ G1的回收步骤大致也分为如下：
 3. 最终标记：并发标记结束后，对SATB记录做可达性分析，标记可回收对象，此操作会STW
 4. 筛选回收：对每个Region的最大收益进行排序，根据用户设定的停顿时间来指定回收计划，构成回收集，然后把存活的Region内的对象复制到空闲的Region中，最后回收掉垃圾对象。此操作会STW，多线程回收
 
-![image-20200921172213842](/Users/zhangjianfeng/Library/Application Support/typora-user-images/image-20200921172213842.png)
+![image-20200921172213842](https://github.com/huifeidehuzi/images/blob/master/data/image-20200921172213842.png)
 
 
 
@@ -539,7 +541,7 @@ G1的回收步骤大致也分为如下：
 
 
 
-![image-20200921093713794](/jvm-/image-20200921093713794.png)
+![image-20200921093713794](https://github.com/huifeidehuzi/images/blob/master/data/image-20200921093713794.png)
 
 Serial ---------------CMS和Serial Old
 
@@ -573,7 +575,6 @@ Parallel Scavenge ------------- CMS 和Parallel Old
 ##### 优先分配至eden
 
 ```java
-
 /**
  * 堆大小为20M，不允许扩展，年轻代为10M，老年代为10M，打印GC日志，eden区比例为80%
  * 版本：JDK1.8，使用CMS+ParNew
@@ -685,7 +686,7 @@ Heap
 
 一个类型（类/接口等，下同）被加载到jvm内存中到卸载出内存，整个生命周期为：**加载->验证->准备->解析->初始化->使用->卸载。其中验证->准备->解析统称为“链接”**
 
-![image-20200923151557257](/Users/zhangjianfeng/Library/Application Support/typora-user-images/image-20200923151557257.png)
+![image-20200923151557257](https://github.com/huifeidehuzi/images/blob/master/data/image-20200923151557257.png)
 
 ​	
 
@@ -809,7 +810,7 @@ Heap
 
 java内存模型规定了所有变量都存储在**主内存**中，每个线程都有自己的**工作内存**，工作内存中保存了被该线程使用的变量的主内存副本，线程对变量的所有操作都必须在工作内存中进行，不同线程之间无法访问对方工作内存中的内容，线程之间的变量值传递需要通过主内存来完成
 
-![image-20200927144203381](/Users/zhangjianfeng/Library/Application Support/typora-user-images/image-20200927144203381.png)
+![image-20200927144203381](https://github.com/huifeidehuzi/images/blob/master/data/image-20200927144203381.png)
 
 
 
@@ -840,4 +841,27 @@ java内存模型规定了所有变量都存储在**主内存**中，每个线程
 - 一个变量如果没有被lock，那么就不能unlock
 - 一个变量如果被lock，其他线程不允许对它进行unlock
 - 一个变量进行unlock之前，必须先把变量值同步主内存
+
+
+
+##### 线程状态切换
+
+java定义了6种线程状态，分别是：
+
+1. 新建（New）：创建后未启动的线程
+2. 运行（Runnable）：正在执行且未结束的、等待分配CPU的线程
+3. 无限等待（Waiting）：
+   1. 未设置超时时间的wait()
+   2. 未设置超时时间的join()
+   3. LockSupport的park()
+4. 有限等待（Timed Waiting）：
+   1. 设置了超时时间的wait()
+   2. 设置了超时时间的join()
+   3. sleep()
+   4. LockSupport的parkNanos()
+   5. LockSupport的parkUntil()
+5. 阻塞（Blocked）：程序进入同步区域时会被阻塞
+6. 结束（Terminated）：线程已执行结束
+
+![image-20201009165603078](https://github.com/huifeidehuzi/images/blob/master/data/image-20201009165603078.png)
 
