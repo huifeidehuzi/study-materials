@@ -548,3 +548,129 @@ public Object execute(SqlSession sqlSession, Object[] args) {
 
 
 
+### 缓存
+
+Mybatis提供了一级和二级缓存功能，在查询结果前会先访问一级缓存（如果开启了二级缓存会优先访问二级缓存，缓存未命中才会访问一级缓存），如果缓存未命中则会访问数据库并将结果缓存
+
+缓存的好处是提高查询效率，同一查询条件不必重复查询数据库，减少开销，提升性能，但缓存使用不当会有事务和数据的问题，接下来会介绍
+
+
+
+#### Cache
+
+Cache是缓存顶级接口，定义了一些基本的操作，所有的缓存实现都基于Cache实现，Mybatis提供了基本功能的PerpetualCache、LRU策略的LruCache、保证线程安全的SynchronizedCache、阻塞的BlockingCache等等，除此之外还可以自己实现缓存
+
+此外，Mybatis的缓存使用了装饰器模式
+
+这里就不介绍PerpetualCache了，这是最简单的缓存实现，本章仅介绍比较有特点的LruCache、FIFOCache、BlockingCache
+
+
+
+##### LruCache
+
+移除最少使用的缓存，Mybatis通过LinkedHashMap和重写其removeEldestEntry()方法实现该策略，最多缓存1024个数据
+
+
+
+```java
+public class LruCache implements Cache {
+
+  // 被装饰缓存类
+  private final Cache delegate;
+  // 缓存数据集合
+  private Map<Object, Object> keyMap;
+  // 最近最少使用的缓存key
+  // 或者说是将要被移除的key
+  private Object eldestKey;
+
+  public LruCache(Cache delegate) {
+    this.delegate = delegate;
+    // 最多缓存1024份数据
+    setSize(1024);
+  }
+
+  @Override
+  public String getId() {
+    return delegate.getId();
+  }
+
+  @Override
+  public int getSize() {
+    return delegate.getSize();
+  }
+	
+  // 重点在这里
+  public void setSize(final int size) {
+    // 使用LinkedHashMap，因为LinkedHashMap可以保证数据的顺序（注：accessOrder=true）
+    // 此外，重写removeEldestEntry()，当插入数据size超出时，会获取最少使用的key设置给eldestKey
+    // 当调用LruCache.putObject()方法时会通过LruCache.cycleKeyList()方法将需要移除的key移除掉
+    // 具体细节原理会在下面介绍
+    // LinkedHashMap通过get()来刷新被访问的数据移动到链表尾部
+		// 这样，长时间未访问过的数据会在链表的头部，具体的实现原理可以自行查阅LinkedHashMap源码
+    keyMap = new LinkedHashMap<Object, Object>(size, .75F, true) {
+      private static final long serialVersionUID = 4267176411845948333L;
+
+      @Override
+      protected boolean removeEldestEntry(Map.Entry<Object, Object> eldest) {
+        // put数据，当size不够时，会获取最少使用的数据，并设置给eldestKey
+        boolean tooBig = size() > size;
+        if (tooBig) {
+          eldestKey = eldest.getKey();
+        }
+        return tooBig;
+      }
+    };
+  }
+
+  @Override
+  public void putObject(Object key, Object value) {
+    // 缓存数据，重点是cycleKeyList()方法，原理在该方法介绍
+    delegate.putObject(key, value);
+    cycleKeyList(key);
+  }
+
+  @Override
+  public Object getObject(Object key) {
+    // 这里调用get方法目的是为了刷新此key的位置到链表尾部
+    // 这样一来，长时间未访问过的key就会再链表的头部
+    keyMap.get(key);
+    return delegate.getObject(key);
+  }
+
+  @Override
+  public Object removeObject(Object key) {
+    return delegate.removeObject(key);
+  }
+
+  @Override
+  public void clear() {
+    delegate.clear();
+    keyMap.clear();
+  }
+
+  @Override
+  public ReadWriteLock getReadWriteLock() {
+    return null;
+  }
+	
+  // 这里是重点
+  private void cycleKeyList(Object key) {
+    // 缓存key，目的是为了获取需要移除的key，这里分2种情况
+    // 1.当put数据时，size长度足够，就获取不到需要移除的key，则不需要移除
+    // 2.当size长度不够时就会获取到需要移除的key，eldestKey!=null成立
+    keyMap.put(key, key);
+    if (eldestKey != null) {
+      // 置空eldestKey，将被装饰类的对应key缓存移除
+      delegate.removeObject(eldestKey);
+      eldestKey = null;
+    }
+  }
+}
+```
+
+以上就是Mybatis中LRU的原理，值得注意的是从始至终keyMap是为了LRU策略服务的，真正的缓存操作还是基于被装饰类。
+
+
+
+
+
