@@ -487,7 +487,7 @@ public static class MethodSignature {
 
 
 
-##### 执行execute()
+##### 执行SQL
 
 到这里，MapperMethod创建之后，接下来是调用execute()方法来执行相关sql，来看下execute()做了些什么
 
@@ -568,16 +568,14 @@ Cache是缓存顶级接口，定义了一些基本的操作，所有的缓存实
 
 ##### LruCache
 
-移除最少使用的缓存，Mybatis通过LinkedHashMap和重写其removeEldestEntry()方法实现该策略，最多缓存1024个数据
-
-
+移除最少使用的缓存，Mybatis通过LinkedHashMap和重写其removeEldestEntry()方法实现该策略，最多缓存1024个元素
 
 ```java
 public class LruCache implements Cache {
 
   // 被装饰缓存类
   private final Cache delegate;
-  // 缓存数据集合
+  // 缓存元素集合
   private Map<Object, Object> keyMap;
   // 最近最少使用的缓存key
   // 或者说是将要被移除的key
@@ -585,7 +583,7 @@ public class LruCache implements Cache {
 
   public LruCache(Cache delegate) {
     this.delegate = delegate;
-    // 最多缓存1024份数据
+    // 最多缓存1024份元素
     setSize(1024);
   }
 
@@ -601,18 +599,18 @@ public class LruCache implements Cache {
 	
   // 重点在这里
   public void setSize(final int size) {
-    // 使用LinkedHashMap，因为LinkedHashMap可以保证数据的顺序（注：accessOrder=true）
-    // 此外，重写removeEldestEntry()，当插入数据size超出时，会获取最少使用的key设置给eldestKey
+    // 使用LinkedHashMap，因为LinkedHashMap可以保证元素的顺序（注：accessOrder=true）
+    // 此外，重写removeEldestEntry()，当插入元素size超出时，会获取最少使用的key设置给eldestKey
     // 当调用LruCache.putObject()方法时会通过LruCache.cycleKeyList()方法将需要移除的key移除掉
     // 具体细节原理会在下面介绍
-    // LinkedHashMap通过get()来刷新被访问的数据移动到链表尾部
-		// 这样，长时间未访问过的数据会在链表的头部，具体的实现原理可以自行查阅LinkedHashMap源码
+    // LinkedHashMap通过get()来刷新被访问的元素移动到链表尾部
+		// 这样，长时间未访问过的元素会在链表的头部，具体的实现原理可以自行查阅LinkedHashMap源码
     keyMap = new LinkedHashMap<Object, Object>(size, .75F, true) {
       private static final long serialVersionUID = 4267176411845948333L;
 
       @Override
       protected boolean removeEldestEntry(Map.Entry<Object, Object> eldest) {
-        // put数据，当size不够时，会获取最少使用的数据，并设置给eldestKey
+        // put元素，当size不够时，会获取最少使用的元素，并设置给eldestKey
         boolean tooBig = size() > size;
         if (tooBig) {
           eldestKey = eldest.getKey();
@@ -624,7 +622,7 @@ public class LruCache implements Cache {
 
   @Override
   public void putObject(Object key, Object value) {
-    // 缓存数据，重点是cycleKeyList()方法，原理在该方法介绍
+    // 缓存元素，重点是cycleKeyList()方法，原理在该方法介绍
     delegate.putObject(key, value);
     cycleKeyList(key);
   }
@@ -656,7 +654,7 @@ public class LruCache implements Cache {
   // 这里是重点
   private void cycleKeyList(Object key) {
     // 缓存key，目的是为了获取需要移除的key，这里分2种情况
-    // 1.当put数据时，size长度足够，就获取不到需要移除的key，则不需要移除
+    // 1.当put元素时，size长度足够，就获取不到需要移除的key，则不需要移除
     // 2.当size长度不够时就会获取到需要移除的key，eldestKey!=null成立
     keyMap.put(key, key);
     if (eldestKey != null) {
@@ -672,5 +670,212 @@ public class LruCache implements Cache {
 
 
 
+##### FIFOCache
+
+先进先出策略，默认最多缓存1024个元素，当缓存元素个数超过size时则移除链表第一个元素
 
 
+
+```java
+public class FifoCache implements Cache {
+	
+  // 被装饰缓存类
+  private final Cache delegate;
+  // 缓存元素集合
+  private final Deque<Object> keyList;
+  // 集合最大长度
+  private int size;
+
+  public FifoCache(Cache delegate) {
+    this.delegate = delegate;
+    // 集合实现为LinkedList，先进先出，双向链表
+    this.keyList = new LinkedList<Object>();
+    // 默认最大元素个数为1024，可通过setSize()设置元素个数
+    this.size = 1024;
+  }
+
+  @Override
+  public String getId() {
+    return delegate.getId();
+  }
+
+  @Override
+  public int getSize() {
+    return delegate.getSize();
+  }
+
+  public void setSize(int size) {
+    this.size = size;
+  }
+
+  @Override
+  public void putObject(Object key, Object value) {
+    // 这里是重点,具体原理在该方法内介绍
+    cycleKeyList(key);
+    delegate.putObject(key, value);
+  }
+
+  @Override
+  public Object getObject(Object key) {
+    return delegate.getObject(key);
+  }
+
+  @Override
+  public Object removeObject(Object key) {
+    return delegate.removeObject(key);
+  }
+
+  @Override
+  public void clear() {
+    delegate.clear();
+    keyList.clear();
+  }
+
+  @Override
+  public ReadWriteLock getReadWriteLock() {
+    return null;
+  }
+
+  private void cycleKeyList(Object key) {
+    // 将key添加到链表尾部
+    keyList.addLast(key);
+    // 当链表长度大于size时，则移除链表第一个元素
+    if (keyList.size() > size) {
+      Object oldestKey = keyList.removeFirst();
+      // 移除被装饰缓存类的元素
+      delegate.removeObject(oldestKey);
+    }
+  }
+}
+```
+
+
+
+
+
+##### BlockingCache
+
+阻塞缓存，通过重入锁ReentrantLock实现
+
+```java
+public class BlockingCache implements Cache {
+	
+  // 超时时间
+  private long timeout;
+  // 被装饰缓存类
+  private final Cache delegate;
+  // 存放key及对应锁的集合
+  private final ConcurrentHashMap<Object, ReentrantLock> locks;
+
+  public BlockingCache(Cache delegate) {
+    this.delegate = delegate;
+    this.locks = new ConcurrentHashMap<Object, ReentrantLock>();
+  }
+
+  @Override
+  public String getId() {
+    return delegate.getId();
+  }
+
+  @Override
+  public int getSize() {
+    return delegate.getSize();
+  }
+
+  @Override
+  public void putObject(Object key, Object value) {
+    try {
+      delegate.putObject(key, value);
+    } finally {
+      // 这里是重点，为什么只有释放锁的逻辑，没有加锁的逻辑？
+      // 因为在getObject()方法中，会先对key加锁，然后获取缓存，如果缓存未命中，则不会释放锁
+      // 接下来Mybatis会查询数据库然后将结果放入缓存，最后释放锁（一级缓存做的事）
+      releaseLock(key);
+    }
+  }
+
+  @Override
+  public Object getObject(Object key) {
+    acquireLock(key);
+    Object value = delegate.getObject(key);
+    if (value != null) {
+      releaseLock(key);
+    }        
+    return value;
+  }
+
+  @Override
+  public Object removeObject(Object key) {
+    // 这里是重点：为什么清楚某个缓存只释放锁不做remove操作？我也不知道，留个TODO吧
+    releaseLock(key);
+    return null;
+  }
+
+  @Override
+  public void clear() {
+    delegate.clear();
+  }
+
+  @Override
+  public ReadWriteLock getReadWriteLock() {
+    return null;
+  }
+  
+  private ReentrantLock getLockForKey(Object key) {
+    ReentrantLock lock = new ReentrantLock();
+    ReentrantLock previous = locks.putIfAbsent(key, lock);
+    return previous == null ? lock : previous;
+  }
+  
+  private void acquireLock(Object key) {
+    Lock lock = getLockForKey(key);
+    if (timeout > 0) {
+      try {
+        boolean acquired = lock.tryLock(timeout, TimeUnit.MILLISECONDS);
+        if (!acquired) {
+          throw new CacheException("Couldn't get a lock in " + timeout + " for the key " +  key + " at the cache " + delegate.getId());  
+        }
+      } catch (InterruptedException e) {
+        throw new CacheException("Got interrupted while trying to acquire lock for key " + key, e);
+      }
+    } else {
+      lock.lock();
+    }
+  }
+  
+  private void releaseLock(Object key) {
+    ReentrantLock lock = locks.get(key);
+    if (lock.isHeldByCurrentThread()) {
+      lock.unlock();
+    }
+  }
+
+  public long getTimeout() {
+    return timeout;
+  }
+
+  public void setTimeout(long timeout) {
+    this.timeout = timeout;
+  }  
+}
+```
+
+
+
+#### 一级缓存
+
+Mybatis在执行Select之前，会优先在一级缓存中先查找，如果未命中则从数据库查询数据，然后将结果放入一级缓存
+
+一级缓存作用于Sqlsession，遇到Insert、delete、update、提交和回滚事务操作，一级缓存会被清空
+
+执行流程这里不做阐述，上述文档有分析，直接从入口开始
+
+从上述文档中有介绍，入口是从MapperMethod.execute()开始，调用Sqlsession.select()，然后Sqlsession.select()会调用Executor.query()，缓存就是在Executor中处理的
+
+Executor是sql执行器的顶层接口，事务，缓存，执行sql都是在此完成，它有2个基础实现，**BaseExecutor和CachingExecutor**
+
+BaseExecutor是顶层实现，当一级缓存未开启则所有的sql执行都会走它，CachingExecutor是缓存执行器，当一级缓存开启，sql执行会走它，直到缓存命中需要查询数据库则会调用BaseExecutor的query()
+
+此外BaseExecutor还有四个实现类，BatchExecutor、ClosedExecutor、ReuseExecutor、SimpleExecutor，默认实现为SimpleExecutor
+
+在此之前，
