@@ -868,14 +868,224 @@ Mybatis在执行Select之前，会优先在一级缓存中先查找，如果未�
 
 一级缓存作用于Sqlsession，遇到Insert、delete、update、提交和回滚事务操作，一级缓存会被清空
 
-执行流程这里不做阐述，上述文档有分析，直接从入口开始
+一级缓存是在SqlsessionFacotry.openSession()开启的，具体逻辑不做阐述
 
 从上述文档中有介绍，入口是从MapperMethod.execute()开始，调用Sqlsession.select()，然后Sqlsession.select()会调用Executor.query()，缓存就是在Executor中处理的
 
 Executor是sql执行器的顶层接口，事务，缓存，执行sql都是在此完成，它有2个基础实现，**BaseExecutor和CachingExecutor**
 
-BaseExecutor是顶层实现，当一级缓存未开启则所有的sql执行都会走它，CachingExecutor是缓存执行器，当一级缓存开启，sql执行会走它，直到缓存命中需要查询数据库则会调用BaseExecutor的query()
+BaseExecutor是顶层实现，当一级缓存未开启则所有的sql执行都会走它，CachingExecutor是缓存执行器，当一级缓存开启，sql执行会走它，直到缓存未命中需要查询数据库则会调用BaseExecutor的query()
 
 此外BaseExecutor还有四个实现类，BatchExecutor、ClosedExecutor、ReuseExecutor、SimpleExecutor，默认实现为SimpleExecutor
 
-在此之前，
+```java
+// BaseExecutor.query() 一级缓存查询源码
+public <E> List<E> query(MappedStatement ms, Object parameter, RowBounds rowBounds, ResultHandler resultHandler, CacheKey key, BoundSql boundSql) throws SQLException {
+  ErrorContext.instance().resource(ms.getResource()).activity("executing a query").object(ms.getId());
+  if (closed) {
+    throw new ExecutorException("Executor was closed.");
+  }
+  if (queryStack == 0 && ms.isFlushCacheRequired()) {
+    clearLocalCache();
+  }
+  List<E> list;
+  try {
+    queryStack++;
+    // 先从localCache一级缓存获取
+    // 注意：localCache = BaseExecutor.PerpetualCache 
+    list = resultHandler == null ? (List<E>) localCache.getObject(key) : null;
+    if (list != null) {
+      // 存储过程逻辑，这里不做阐述
+      handleLocallyCachedOutputParameters(ms, key, parameter, boundSql);
+    } else {
+      // 未获取到则从数据库查询
+      list = queryFromDatabase(ms, parameter, rowBounds, resultHandler, key, boundSql);
+    }
+  } finally {
+    queryStack--;
+  }
+  if (queryStack == 0) {
+    for (DeferredLoad deferredLoad : deferredLoads) {
+      deferredLoad.load();
+    }
+    // issue #601
+    deferredLoads.clear();
+    if (configuration.getLocalCacheScope() == LocalCacheScope.STATEMENT) {
+      // issue #482
+      clearLocalCache();
+    }
+  }
+  return list;
+}
+```
+
+
+
+#### 二级缓存
+
+二级缓存是在一级缓存之上的，如果二级缓存开启，则会先查询二级缓存，未命中则查询一级缓存，如果一级缓存未命中则查询数据库
+
+```java
+// CachingExecutor.query() 二级缓存查询
+public <E> List<E> query(MappedStatement ms, Object parameterObject, RowBounds rowBounds, ResultHandler resultHandler, CacheKey key, BoundSql boundSql)
+    throws SQLException {
+  // 注意：从MappedStatement获取Cache
+  // 并非从CachingExecutor中获取
+  Cache cache = ms.getCache();
+  if (cache != null) {
+    flushCacheIfRequired(ms);
+    if (ms.isUseCache() && resultHandler == null) {
+      ensureNoOutParams(ms, boundSql);
+      // 先访问二级缓存
+      List<E> list = (List<E>) tcm.getObject(cache, key);
+      if (list == null) {
+        // 访问不到再访问一级缓存
+        list = delegate.<E> query(ms, parameterObject, rowBounds, resultHandler, key, boundSql);
+        // 将结果放入二级缓存
+        tcm.putObject(cache, key, list); // issue #578 and #116
+      }
+      return list;
+    }
+  }
+  // 如果未配置二级缓存就走一级缓存
+  return delegate.<E> query(ms, parameterObject, rowBounds, resultHandler, key, boundSql);
+}
+```
+
+注意，二级缓存中的Cache不是从CachingExecutor中获取的，而是从MappedStatement中获取的，由于MappedStatement存在全局配置中且可以被多个CachingExecutor获取到，所以会存在线程安全的问题，这个可以用SynchronizedCache解决，此外，多个事务共用一个缓存会导致脏读问题，这个是通过TransactionalCacheManager解决的
+
+```java
+// 事务缓存管理器
+public class TransactionalCacheManager {
+	// 维护缓存与事务缓存的关系
+  private final Map<Cache, TransactionalCache> transactionalCaches = new HashMap<Cache, TransactionalCache>();
+
+  public void clear(Cache cache) {
+    getTransactionalCache(cache).clear();
+  }
+
+  public Object getObject(Cache cache, CacheKey key) {
+    return getTransactionalCache(cache).getObject(key);
+  }
+  
+  public void putObject(Cache cache, CacheKey key, Object value) {
+    getTransactionalCache(cache).putObject(key, value);
+  }
+
+  public void commit() {
+    for (TransactionalCache txCache : transactionalCaches.values()) {
+      txCache.commit();
+    }
+  }
+
+  public void rollback() {
+    for (TransactionalCache txCache : transactionalCaches.values()) {
+      txCache.rollback();
+    }
+  }
+  private TransactionalCache getTransactionalCache(Cache cache) {
+    TransactionalCache txCache = transactionalCaches.get(cache);
+    if (txCache == null) {
+      txCache = new TransactionalCache(cache);
+      transactionalCaches.put(cache, txCache);
+    }
+    return txCache;
+  }
+
+}
+```
+
+TransactionalCacheManager仅仅是维护了Cache和TransactionalCache的关系，具体的缓存还是由TransactionalCache来完成的
+
+TransactionalCache也是Cache的一种缓存装饰类，它为Cache增加了事务功能，脏读问题就是由它解决的
+
+```java
+public class TransactionalCache implements Cache {
+
+  private static final Log log = LogFactory.getLog(TransactionalCache.class);
+	
+  // 被装饰类
+  private final Cache delegate;
+  // 是否清空事务提交
+  private boolean clearOnCommit;
+  // 事务提交前，从数据库查询的结果会存在这里
+  private final Map<Object, Object> entriesToAddOnCommit;
+  // 事务提交前，缓存未命中时，CacheKey会存在这里
+  // 只Cache是BlockingCache时，此集合才有意义
+  // 因为BlockingCache.getObject时，未命中缓存会一直锁住key
+  // 所以在这里即使缓存未命中也要往BlockingCache存入控制，释放锁
+  // 具体更细节的逻辑可以自行查阅相关资料
+  private final Set<Object> entriesMissedInCache;
+
+  public TransactionalCache(Cache delegate) {
+    this.delegate = delegate;
+    this.clearOnCommit = false;
+    // hashmap实现
+    this.entriesToAddOnCommit = new HashMap<Object, Object>();
+    this.entriesMissedInCache = new HashSet<Object>();
+  }
+	
+  // ... 忽略部分代码
+
+  @Override
+  public Object getObject(Object key) {
+    // 获取缓存
+    Object object = delegate.getObject(key);
+    if (object == null) {
+      // 为空则将key存入entriesMissedInCache
+      entriesMissedInCache.add(key);
+    }
+    if (clearOnCommit) {
+      return null;
+    } else {
+      return object;
+    }
+  }
+
+  @Override
+  public void putObject(Object key, Object object) {
+    // 将结果缓存到entriesToAddOnCommit
+    entriesToAddOnCommit.put(key, object);
+  }
+	
+  public void commit() {
+    if (clearOnCommit) {
+      delegate.clear();
+    }
+    // 刷新entriesToAddOnCommit到delegate中
+    flushPendingEntries();
+    reset();
+  }
+  
+  private void flushPendingEntries() {
+    // entriesToAddOnCommit的数据放入缓存
+    for (Map.Entry<Object, Object> entry : entriesToAddOnCommit.entrySet()) {
+      delegate.putObject(entry.getKey(), entry.getValue());
+    }
+    // 将缓存未命中的key放入缓存，缓存值为null
+    for (Object entry : entriesMissedInCache) {
+      if (!entriesToAddOnCommit.containsKey(entry)) {
+        delegate.putObject(entry, null);
+      }
+    }
+  }
+  
+  private void reset() { 
+    clearOnCommit = false;
+		// 清空集合 
+  	entriesToAddOnCommit.clear(); 
+  	entriesMissedInCache.clear();
+	}
+  
+  @Override
+  public void clear() {
+    clearOnCommit = true;
+    // 清空entriesToAddOnCommit，不清空Cache delegate
+    entriesToAddOnCommit.clear();
+  }
+	// ... 忽略部分代码
+}
+```
+
+TransactionalCache通过2个map解决了脏读的问题，在查询数据库后不是讲结果直接放入Cache中，而是先放入Cache（共享缓存）对应的TransactionalCache.entriesToAddOnCommit（每个事务的缓存）中，等事务提交后再将事务缓存刷到共享缓存中，这样一来，在事务提交前，各个事务间的缓存是隔离的，只能读到已提交的缓存，Mybatis最高缓存级别也仅仅是“读已提交”
+
