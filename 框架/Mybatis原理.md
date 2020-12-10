@@ -1089,3 +1089,96 @@ public class TransactionalCache implements Cache {
 
 TransactionalCache通过2个map解决了脏读的问题，在查询数据库后不是讲结果直接放入Cache中，而是先放入Cache（共享缓存）对应的TransactionalCache.entriesToAddOnCommit（每个事务的缓存）中，等事务提交后再将事务缓存刷到共享缓存中，这样一来，在事务提交前，各个事务间的缓存是隔离的，只能读到已提交的缓存，Mybatis最高缓存级别也仅仅是“读已提交”
 
+
+
+### 插件
+
+Mybatis提供了通过插件机制对框架进行扩展的功能，比如用插件实现自动分页，分表等等，下面介绍下如何自定义编写一个插件及其原理
+
+
+
+#### 可扩展插件
+
+- Executor: update, query, flushStatements, commit, rollback, getTransaction, close, isClosed
+- ParameterHandler: getParameterObject, setParameters
+- ResultSetHandler: handleResultSets, handleOutputParameters
+- StatementHandler: prepare, parameterize, batch, update, query
+
+上面是可扩展的插件类型和对应可以扩展的方法，下面会以Executor为例（其他的都一样，不就不一一介绍了）介绍插件的扩展原理
+
+
+
+#### 如何扩展一个插件
+
+以Executor为例（下同），介绍下如何自定义扩展1个插件
+
+```java
+// 实现Interceptor拦截器
+// 定义自己的扩展逻辑
+@Intercepts({ @Signature(
+  type = Executor.class, // 指定扩展的插件类型
+  method = "query", // 指定扩展方法
+  args ={MappedStatement.class, Object.class, RowBounds.class, // 方法对应参数
+         ResultHandler.class}
+	)
+})
+public class ExamplePlugin implements Interceptor {
+  System.out.println("我是自定义插件扩展内容。。。。。");
+}
+```
+
+
+
+#### 插件植入流程和入口
+
+首先来回顾下，Executor是在openSession（）时候创建的，流程如下
+
+```java
+// step 1. DefaultSqlSessionFactory.openSession()
+public SqlSession openSession() {
+  return openSessionFromDataSource(configuration.getDefaultExecutorType(), null, false);
+}
+
+// step 2. DefaultSqlSessionFactory.openSessionFromDataSource()
+private SqlSession openSessionFromDataSource(ExecutorType execType, TransactionIsolationLevel level, boolean autoCommit) {
+  Transaction tx = null;
+  try {
+    // ...忽略部分代码
+    // 创建Executor
+    final Executor executor = configuration.newExecutor(tx, execType);
+    return new DefaultSqlSession(configuration, executor, autoCommit);
+  } catch (Exception e) {
+    // ...忽略部分代码
+  } 
+  // ... 忽略部分代码
+}
+
+// step 3. Configuration.newExecutor（） 创建Executor
+public Executor newExecutor(Transaction transaction, ExecutorType executorType) {
+  executorType = executorType == null ? defaultExecutorType : executorType;
+  executorType = executorType == null ? ExecutorType.SIMPLE : executorType;
+  Executor executor;
+  // 根据不同的类型生成对应的Executor
+  if (ExecutorType.BATCH == executorType) {
+    executor = new BatchExecutor(this, transaction);
+    } else if (ExecutorType.REUSE == executorType) {
+      executor = new ReuseExecutor(this, transaction);
+    } else {
+    executor = new SimpleExecutor(this, transaction);
+  }
+  // 二级缓存开机则生成CachingExecutor
+  if (cacheEnabled) {
+    executor = new CachingExecutor(executor);
+  }
+  // 重点：植入插件，通过JDK代理生成对应代理类，具体原理下面会介绍
+  executor = (Executor) interceptorChain.pluginAll(executor);
+  return executor;
+}
+```
+
+上面的代码介绍了Executor插件植入的流程和入口，其他类型的插件的流程和入口这里不做阐述，请自行查阅源码，下面来看下插件植入的具体原理
+
+
+
+#### 插件植入原理
+
