@@ -1122,8 +1122,23 @@ Mybatis提供了通过插件机制对框架进行扩展的功能，比如用插�
          ResultHandler.class}
 	)
 })
+// 注意：Interceptor是ibatis包下的
 public class ExamplePlugin implements Interceptor {
-  System.out.println("我是自定义插件扩展内容。。。。。");
+  	// 具体拦截逻辑
+  	public Object intercept(Invocation invocation) throws Throwable {
+      	System.out.println("我是拦截逻辑");
+        return null;
+    }
+		
+    // 插件植入，生成代理对象
+    public Object plugin(Object target) {
+			return Plugin.wrap(target, this);
+    }
+		
+    // 设置属性
+    public void setProperties(Properties properties) {
+
+    }
 }
 ```
 
@@ -1181,4 +1196,77 @@ public Executor newExecutor(Transaction transaction, ExecutorType executorType) 
 
 
 #### 插件植入原理
+
+上文介绍了植入插件的入口：interceptorChain.pluginAll（），来看下具体原理
+
+```java
+// step 1. 插件链
+public class InterceptorChain {
+  // 所有的插件拦截器
+  private final List<Interceptor> interceptors = new ArrayList<Interceptor>();
+	
+  // 植入插件，循环所有的插件生成代理，植入自定义逻辑，生成嵌套了每个插件逻辑的代理类
+  public Object pluginAll(Object target) {
+    for (Interceptor interceptor : interceptors) {
+      // interceptor是个接口，plugin有N个实现，起最终会调用Plugin.wrap()生成代理对象
+      // 所以接下里会直接介绍Plugin.wrap()
+      target = interceptor.plugin(target);
+    }
+    return target;
+  }
+	
+  // 此方法在XMLConfigBuilder.parse()方法中被调用
+  // 原理：解析mybatis-config.xml中<plugins>配置的插件添加到此集合
+  public void addInterceptor(Interceptor interceptor) {
+    interceptors.add(interceptor);
+  }
+}
+```
+
+继续看下interceptor.plugin()做了什么
+
+```java
+// 插件生成类，JDK动态代理生成
+public class Plugin implements InvocationHandler {
+	
+  // 代理目标类
+  private final Object target;
+  // 拦截器
+  private final Interceptor interceptor;
+  // 拦截的@Signature内容
+  private final Map<Class<?>, Set<Method>> signatureMap;
+	
+  // 生成代理类具体逻辑
+  public static Object wrap(Object target, Interceptor interceptor) {
+    // 获取@Signature配置的内容，如拦截的类型，方法，参数等
+    Map<Class<?>, Set<Method>> signatureMap = getSignatureMap(interceptor);
+    // 拦截的类型
+    Class<?> type = target.getClass();
+    Class<?>[] interfaces = getAllInterfaces(type, signatureMap);
+    if (interfaces.length > 0) {
+      // 生成代理对象
+      return Proxy.newProxyInstance(
+          type.getClassLoader(),
+          interfaces,
+          new Plugin(target, interceptor, signatureMap));
+    }
+    return target;
+  }
+  
+  // 值的注意的是，生成的是Plugin代理类，来看看Plugin的invoke实现
+  @Override
+  public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+    try {
+      // 如果命中了@Signature配置的方法，则执行拦截逻辑
+      Set<Method> methods = signatureMap.get(method.getDeclaringClass());
+      if (methods != null && methods.contains(method)) {
+        return interceptor.intercept(new Invocation(target, method, args));
+      }
+      return method.invoke(target, args);
+    } catch (Exception e) {
+      throw ExceptionUtil.unwrapThrowable(e);
+    }
+  }
+}
+```
 
