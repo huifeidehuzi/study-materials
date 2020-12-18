@@ -213,7 +213,7 @@ public class LockSupport {
 
 ```java
 public class LockSupport {
-  	// 阻塞当前线程，不会释放CPU资源，直到调用unpark()放会释放
+  	// 阻塞当前线程，不会释放锁资源，直到调用unpark()放会释放
     // 此外，如果线程被中断、设置的时间到了（time>0且isAbsolute==true）也会释放
   	public static void park() {
         UNSAFE.park(false, 0L);
@@ -261,7 +261,7 @@ public class LockSupport {
 
 ## Thread.sleep()和LockSupport.park()的区别？
 
-1. 功能都一样，都是阻塞当前线程，且不会释放资源
+1. 功能都一样，都是阻塞当前线程，且不会释放锁资源
 2. sleep只能等自己醒来，park可以被唤醒
 3. sleep需要捕获中断异常（声明sleep的地方需要try-catch），park不需要
 4. park比sleep更灵活
