@@ -204,7 +204,7 @@ public void myDestroy(){
 
 Spring非常重要的一个扩展点，俗称**后置处理器**，对Spring工厂创建的Bean进行再次加工，Spring中许多地方都用到了，比如对@Autowired的解析，AOP的底层实现等等
 
-**注意：5.0版本开始，这2个方法变成了default方法，默认return bean，如果2个方法返回Null，则Spring继续使用传入的Bean，否则使用返回的Bean，而且它会对所有Spring创建的对象进行加工，所以在使用时记得做自己的逻辑判断**
+**注意：5.0版本开始，这2个方法变成了default方法，默认return bean，而且它会对所有Spring创建的对象进行加工，所以在使用时记得做自己的逻辑判断，如果返回Null，会报错**
 
 示例：
 
