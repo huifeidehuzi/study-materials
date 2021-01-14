@@ -19,13 +19,298 @@ Spring其实包含了很多东西，比如AOP、IOC、Test、MVC、CACHE、Groov
 
 
 
-IOC大致流程如下
+### 生命周期大致流程
 
-[![sucaUP.jpg](https://s3.ax1x.com/2021/01/08/sucaUP.jpg)](https://imgchr.com/i/sucaUP)
-
-
+[![sdPeOO.jpg](https://s3.ax1x.com/2021/01/14/sdPeOO.jpg)](https://imgchr.com/i/sdPeOO)
 
 
+
+### 实例化Bean的步骤
+
+1. 创建工厂
+
+   ```java
+   public class AnnotationConfigApplicationContext extends GenericApplicationContext implements AnnotationConfigRegistry {
+       // 创建工厂，初始化
+       public AnnotationConfigApplicationContext(Class<?>... annotatedClasses) {
+           // 这一步，会初始化工厂
+           // 首先会执行父类GenericApplicationContext的无参构造，再执行自己的无参构造
+           this();
+           // 这俩方法先暂时忽略
+           // register(annotatedClasses);
+           // refresh();
+       }
+   }
+   public class GenericApplicationContext extends AbstractApplicationContext implements BeanDefinitionRegistry {
+   	// 初始化工厂，默认为DefaultListableBeanFactory
+   	public GenericApplicationContext() {
+   		this.beanFactory = new DefaultListableBeanFactory();
+   	}
+   }
+   ```
+   
+2. 扫描配置的config类，封装成BeanDefinition放到BeanDefinitionMap
+
+   ```java
+   public AnnotationConfigApplicationContext(Class<?>... annotatedClasses) {
+   		// 这一步将配置类封装成BeanDefinition放到BeanDefinitionMap
+       // 内部调用BeanDefinitionRegistry#registerBeanDefinition()方法注册的，就不细讲了
+       register(annotatedClasses);
+       // 这个先忽略
+       // refresh();
+   }
+   ```
+
+3. 调用invokeBeanFactoryPostProcessors，通过ConfigurationClassPostProcessor扫描有@Component、@Service、@Bean等注解的类封装成BeanDefinition并放到BeanDefinitionMap中，内部调用invokeBeanDefinitionRegistryPostProcessors执行BeanDefinition注册后期处理器，其内部调用了DefaultListableBeanFactory.registerBeanDefinition()方法扫描需要注册的类放到BeanDefinitionMap
+
+   ```java
+   public void refresh() throws BeansException, IllegalStateException {
+      synchronized (this.startupShutdownMonitor) {
+        // 执行BeanFactoryPostProcessor所有实现并且注册为bean
+        // 先执行Spring内部的，再执行开发者自定义的
+        invokeBeanFactoryPostProcessors(beanFactory);
+      }
+   }
+   ```
+
+4. 如果有自定义的BeanFactoryPostProcessor实现，则执行实现的自定义逻辑，到这里，基本上往BeanDefinitionMap放的操作已经结束了，下面就开始对这个map中的BeanDefinition实例化了
+
+5. 调用finishBeanFactoryInitialization().preInstantiateSingletons()，实例化bean，并放到单例池(map)中
+   
+   
+   ```java
+   public void preInstantiateSingletons() throws BeansException {
+      // 所有的beanName
+      List<String> beanNames = new ArrayList<String>(this.beanDefinitionNames);
+   
+      for (String beanName : beanNames) {
+         // 获取合并过，最新的RootBeanDefinition
+         // 因为在这之前BeanFactoryPostProcessor可以对BeanDefinition进行修改，bean定义可能会有变化，需要重新合并，以保证合并的是最新的
+      // RootBeanDefinition是BeanDefinition比较全面的一个子类
+         RootBeanDefinition bd = getMergedLocalBeanDefinition(beanName);
+         // 如果BeanDefinition是抽象的、非单例的、懒加载的，是不会被实例化的
+         if (!bd.isAbstract() && bd.isSingleton() && !bd.isLazyInit()) {
+            // 如果是FactoryBean的实现
+            if (isFactoryBean(beanName)) {
+               final FactoryBean<?> factory = (FactoryBean<?>) getBean(FACTORY_BEAN_PREFIX + beanName);
+               boolean isEagerInit;
+               if (System.getSecurityManager() != null && factory instanceof SmartFactoryBean) {
+                  isEagerInit = AccessController.doPrivileged(new PrivilegedAction<Boolean>() {
+                     @Override
+                     public Boolean run() {
+                        return ((SmartFactoryBean<?>) factory).isEagerInit();
+                     }
+                  }, getAccessControlContext());
+               }
+               else {
+                  isEagerInit = (factory instanceof SmartFactoryBean &&
+                        ((SmartFactoryBean<?>) factory).isEagerInit());
+               }
+               if (isEagerInit) {
+                  getBean(beanName);
+               }
+            }
+            else {
+               // 最重要的方法，如果get不到则创建bean
+               // AbstractBeanFactory#getBean()
+               getBean(beanName);
+            }
+         }
+      }
+   	 // ...省略部分代码
+   }
+   ```
+   
+   getBean调用AbstractBeanFactory#doGetBean()方法
+   
+   ```java
+   protected <T> T doGetBean(
+         final String name, final Class<T> requiredType, final Object[] args, boolean typeCheckOnly)
+         throws BeansException {
+   	 // 转换beanName，比如：如果是FactoryName,BeanName就是&+beanName
+      final String beanName = transformedBeanName(name);
+      Object bean;
+   	 // 获取单例对象，第一次肯定为空
+      Object sharedInstance = getSingleton(beanName);
+      if (sharedInstance != null && args == null) {
+         bean = getObjectForBeanInstance(sharedInstance, name, beanName, null);
+      }
+      else {
+       		// 省略部分代码 
+         try {
+            // 获取BeanDefinition
+            final RootBeanDefinition mbd = getMergedLocalBeanDefinition(beanName);
+            // 检查BeanDefinition
+            checkMergedBeanDefinition(mbd, beanName, args);
+       		// 省略部分代码 
+            // 重要：创建bean
+            if (mbd.isSingleton()) {
+               sharedInstance = getSingleton(beanName, new ObjectFactory<Object>() {
+                  @Override
+                  public Object getObject() throws BeansException {
+                     try {
+                        // 创建bean
+                        return createBean(beanName, mbd, args);
+                     }
+                  }
+               });
+               bean = getObjectForBeanInstance(sharedInstance, name, beanName, mbd);
+            }
+           // 省略部分代码
+      }
+      return (T) bean;
+   }
+   ```
+   
+   createBean方法实现
+   
+   ```java
+   protected Object createBean(String beanName, RootBeanDefinition mbd, Object[] args) throws BeanCreationException {
+      // 省略部分代码
+      // 这是最重要的方法，创建bean
+      Object beanInstance = doCreateBean(beanName, mbdToUse, args);
+      if (logger.isDebugEnabled()) {
+         logger.debug("Finished creating instance of bean '" + beanName + "'");
+      }
+      return beanInstance;
+   }
+   ```
+   
+   doCreateBean方法实现
+   
+   ```java
+   protected Object doCreateBean(final String beanName, final RootBeanDefinition mbd, final Object[] args)
+         throws BeanCreationException {
+   
+      // bean包装类
+      BeanWrapper instanceWrapper = null;
+      if (mbd.isSingleton()) {
+         instanceWrapper = this.factoryBeanInstanceCache.remove(beanName);
+      }
+      if (instanceWrapper == null) {
+         // 这里仅仅创建了java对象，而没有走完bean的整个流程
+         // 此方法很重要
+         instanceWrapper = createBeanInstance(beanName, mbd, args);
+      }
+      // bean
+      final Object bean = (instanceWrapper != null ? instanceWrapper.getWrappedInstance() : null);
+      // beanType
+      Class<?> beanType = (instanceWrapper != null ? instanceWrapper.getWrappedClass() : null);
+      mbd.resolvedTargetType = beanType;
+   	 // bean是否支持循环依赖且bean正在创建中，如果支持则将bean提前暴露出来
+      boolean earlySingletonExposure = (mbd.isSingleton() && this.allowCircularReferences &&
+            isSingletonCurrentlyInCreation(beanName));
+      // 支持循环依赖
+      if (earlySingletonExposure) {
+         // 将创建中的对象提前暴露出来，放到三级缓存中，同时从二级缓存中移除
+         // 主要是为了解决循环依赖的问题
+         addSingletonFactory(beanName, new ObjectFactory<Object>() {
+            @Override
+            public Object getObject() throws BeansException {
+               return getEarlyBeanReference(beanName, mbd, bean);
+            }
+         });
+      }
+     Object exposedObject = bean;
+     try {
+         // 1.判断是否需要属性提供
+         // 2.属性填充（依赖注入）
+         // 3.此方法很重要
+   			populateBean(beanName, mbd, instanceWrapper);
+   			if (exposedObject != null) {
+           // 对象创建后的初始化动作
+           // 执行方法及顺序如下：
+           // 1.invokeAwareMethods()方法,主要三个Aware的实现，设置钩子方法的值
+           // 		1.1 BeanNameAware，BeanFactoryAware，BeanClassLoaderAware
+           // 2.BeanPostProcessor.before()方法
+           // 3.invokeInitMethods()方法，也就是@PostConstruct修饰的方法、InitializingBean、init()方法
+           // 4.BeanPostProcessor.after方法，如AOP等
+   				exposedObject = initializeBean(beanName, exposedObject, mbd);
+   			}
+   		}
+   	 // 支持循环依赖
+      if (earlySingletonExposure) {
+         // 获取循环依赖的对象
+         Object earlySingletonReference = getSingleton(beanName, false);
+         if (earlySingletonReference != null) {
+            // 如果相等，则直接返回即可
+            // 因为在BeanPostProcessor或者InitializingBean中，可以对Bean进行二次开发，可能会对Bean做更改，比如对class做修改或者做代理
+            if (exposedObject == bean) {
+               exposedObject = earlySingletonReference;
+            }
+           // 如果不相等，当前这个Bean被其他Bean当做字段使用了（有属性的依赖）
+   				else if (!this.allowRawInjectionDespiteWrapping && hasDependentBean(beanName)) {
+   		    	// 拿到依赖这个bean的所有bean
+             String[] dependentBeans = getDependentBeans(beanName);
+             Set<String> actualDependentBeans = new LinkedHashSet<>(dependentBeans.length);
+             for (String dependentBean : dependentBeans) {
+                 // 如果存在已经创建完的bean（已经创建完的bean依赖该bean）
+                 // 放到list中
+               if (!removeSingletonIfCreatedForTypeCheckOnly(dependentBean)) {
+                 actualDependentBeans.add(dependentBean);
+               }
+             }
+             // tip:如果真的存在，那么就会报错，为什么呢？下面会说 
+             if (!actualDependentBeans.isEmpty()) {
+               throw new BeanCurrentlyInCreationException(beanName,
+                   "Bean with name '" + beanName + "' has been injected into other beans [" +
+                   StringUtils.collectionToCommaDelimitedString(actualDependentBeans) +
+                   "] in its raw version as part of a circular reference, but has eventually been " +
+                   "wrapped. This means that said other beans do not use the final version of the " +
+                   "bean. This is often the result of over-eager type matching - consider using " +
+                   "'getBeanNamesOfType' with the 'allowEagerInit' flag turned off, for example.");
+             }
+           }
+      	}
+      // 注册bean的销毁，将bean放入需要销毁的map中，供后续工厂销毁时调用
+      try {
+         registerDisposableBeanIfNecessary(beanName, bean, mbd);
+      }
+      return exposedObject;
+   }
+   ```
+   
+   我们来设想一下，有A、B两个类互相循环引用。
+   创建A的过程是这样的
+   A->B （创建A，必须先创建B）
+   B->A（创建B，又必须先创建A，因为A的引用已经提前暴露了，假设对象号为@1000）
+   此时B创建完成，B中的对象A为@1000
+   现在A可以继续初始化了（initializeBean），很不碰巧的是，A在这里居然被改变了，变成了一个代理对象，对象号为@1001
+   然后到了第二个处理earlySingletonExposure的地方，发现从缓存中拿到的对象和当前对象不相等了（@1000 != @1001）
+   接着就看一下是否有依赖A的Bean创建完成了，哎，发现还真的有，那就是B
+   然后想啊，B中的A和现在初始化完的A它不一样啊，这个和单例的性质冲突了！所以，必定得报错！
+   
+   
+   
+   getSingleton实现
+   
+   ```java
+   protected Object getSingleton(String beanName, boolean allowEarlyReference) {
+     // 从单例池中获取对象 
+     Object singletonObject = this.singletonObjects.get(beanName);
+      // 如果获取不到，且这个bean正在创建中
+      if (singletonObject == null && isSingletonCurrentlyInCreation(beanName)) {
+         synchronized (this.singletonObjects) {
+            // 从正在创建中的bean集合中获取此bean
+            singletonObject = this.earlySingletonObjects.get(beanName);
+            // 如果获取不到，表示这个bean已经被提前暴露出去了
+            // 在doCreateBean()#addSingletonFactory()方法中会做这件事
+            if (singletonObject == null && allowEarlyReference) {
+               // 从三级缓存中获取，三级缓存会调用getObject()方法创建bean，此时bean还没有完成属性的依赖注入
+               // 将创建好的bean放入二级缓存，同时从三级缓存中移除
+               ObjectFactory<?> singletonFactory = this.singletonFactories.get(beanName);
+               if (singletonFactory != null) {
+                  singletonObject = singletonFactory.getObject();
+                  this.earlySingletonObjects.put(beanName, singletonObject);
+                  this.singletonFactories.remove(beanName);
+               }
+            }
+         }
+      }
+      // 如果获取到了，直接返回即可
+      return (singletonObject != NULL_OBJECT ? singletonObject : null);
+   }
+   ```
 
 #### 创建
 
@@ -170,33 +455,6 @@ public void myDestroy(){
 
 
 
-### 实例化Bean的步骤
-
-1. spring容器启动，初始化GenericApplicationContext构造方法，构建bean工厂：DefaultListableBeanFactory
-
-2. 扫描配置的config类，封装成BeanDefinition放到BeanDefinitionMap
-
-3. 调用invokeBeanFactoryPostProcessors，通过ConfigurationClassPostProcessor扫描有@Component、@Service、@Bean等注解的类封装成BeanDefinition并放到BeanDefinitionMap中，内部调用invokeBeanDefinitionRegistryPostProcessors执行BeanDefinition注册后期处理器，其内部调用了DefaultListableBeanFactory.registerBeanDefinition()方法扫描需要注册的类放到BeanDefinitionMap
-
-4. 如果有自定义的BeanFactoryPostProcessor实现，则执行实现的自定义逻辑(到这里，基本上往BeanDefinitionMap放的操作已经结束了，下面就开始对这个map中的BeanDefinition实例化了)
-
-5. 调用finishBeanFactoryInitialization().preInstantiateSingletons()，实例化bean，并放到单例池(map)中
-       5.1 先拿到所有需要实例化的beanNames
-       5.2 如果scope!=单例或者lazy=true或者是抽象类则不会被实例化，这种bean只有被用到的时候才会被实例化
-       5.3 判断是否factorybean，如果是，则直接调用实现类的getObject获取bean
-       5.4 判断是否允许循环依赖，如果不允许，且有相互引用的bean，则直接抛异常
-       5.5 普通bean，直接调用getBean(name)验证bean是否被实例化过，getbean方法是从signleObjects中获取bean，如果存在则直接返回bean
-       5.6 调用createBean创建对象，填充属性、注入依赖等等
-       5.7 执行构造方法
-       5.8 执行BeanPostProcessor实现，比如AOP
-       5.9 执行初始化方法，比如Init()、InitializingBean的实现类等
-       5.10 放入单例池signleObjects
-       5.11 如果BeanFactory.clost()被调用，则执行bean的destroy方法
-
-**大致流程：new对象-->执行初始化方法-->注入属性-->代理 aop--->放入单例池**
-
-
-
 ### BeanPostProcessor
 
 Spring非常重要的一个扩展点，俗称**后置处理器**，对Spring工厂创建的Bean进行再次加工，Spring中许多地方都用到了，比如对@Autowired的解析，AOP的底层实现等等
@@ -236,7 +494,7 @@ public class MyBeanPostProcessor implements BeanPostProcessor {
 
 ### BeanFactoryPostProcessor
 
-Spring提供的一个在Bean实例化之前的扩展点，如果开发者想做一些个性化的开发，比如对某些BeanDefinition做一些修改、将自己的一些对象托管给Spring等等之类的，就可以实现此接口
+Spring提供的一个在Bean实例化之前的扩展点，在扫描之后执行，如果开发者想做一些个性化的开发，比如对某些BeanDefinition做一些修改、将自己的一些对象托管给Spring等等之类的，就可以实现此接口
 
 ```java
 public interface BeanFactoryPostProcessor {
@@ -269,7 +527,7 @@ public class MyBeanFactoryPostProcessor implements BeanFactoryPostProcessor {
 
 ### BeanDefinitionRegistryPostProcessor
 
-继承BeanFactoryPostProcessor，除了父类提供的postProcessBeanFactory()方法之外，本身还提供了postProcessBeanDefinitionRegistry()方法
+继承BeanFactoryPostProcessor，除了父类提供的postProcessBeanFactory()方法之外，本身还提供了postProcessBeanDefinitionRegistry()方法，在扫描之前执行
 
 **注：postProcessBeanDefinitionRegistry()会比postProcessBeanFactory()先执行**
 
@@ -596,15 +854,115 @@ public class MyFactoryBean implements FactoryBean<User> {
 
 
 
-### 自定义实现jar包，如何托管给spring
+## @Configuration
 
+配置Bean，Spring在3.x开始提供的注解，用于替换XML文件。它也是@Component注解的衍生（扩展），其内部使用了@Component，通过AOP生成Cglib代理对象
+
+
+
+在使用方面，之前是这么配置的
+
+```xml
+<beans>
+  <!-- import配置文件 -->
+	<import resoure="classpath:/applicationContext.cml"/>
+  <!-- 扫描bean，如果要配置包含策略，则需要干掉Spring的默认扫描方式，use-default-filter=false -->
+  <context:compoent-scan base-package="com.test" use-default-filter="false">
+    <!-- 排除使用了Component注解的类不被扫描 -->
+    <context:exclue-filter type="annotation" expression="org.springframework.stereotype.Component"/>
+    <!-- 只扫描使用了Service的类注解 -->
+    <context:include-filter type="annotation" expression="org.springframework.stereotype.Service"/>
+    
+  </context:compoent-scan>
+  <!-- 配置bean -->
+  <bean id="user" class="com.test.User"/>
+  <bean id="product" class="com.test.Product"/>
+</beans>
 ```
-通过spring.factories配置需要扫描的类全路径，springboot就是这么玩的
+
+对应的工厂为：
+
+```java
+ApplicationContext ctx = new ClassPathXmlApplicationContext("/spring.xml");
+```
+
+
+
+使用@Configuration后
+
+**注意：如果同时对一个类型，如对@Component 使用了包含策略和排除策略，则使用了@Component的类还是会被排除掉，其他类型同理**
+
+```java
+@Configuration
+// 等同xml中的context:compoent-scan标签，用于扫描需要交给Spring托管的bean
+// 比如使用了@value @Compoent @Service等等的类
+// 1.排除使用了@Component注解的类，不被扫描
+// 2.排除User类不被扫描
+// 3.通过AOP切面表达式排除com.test及子包不被扫描
+// 4.如果要使用包含策略，则需要干掉Spring默认扫描方式useDefaultFilters = false
+// 5.只扫描使用了@Component注解的类
+@ComponentScan(basePackages = "com",
+        useDefaultFilters = false,
+        excludeFilters = {
+                @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = User.class),
+                @ComponentScan.Filter(type = FilterType.ANNOTATION, classes = Component.class),
+                @ComponentScan.Filter(type = FilterType.ASPECTJ, pattern = {"com.test"})
+        },
+        includeFilters = {
+                @ComponentScan.Filter(type = FilterType.ANNOTATION, classes = Component.class)
+        })
+public class Config{
+  
+  @Bean
+  // 等同于xml中的bean标签，方法名=bean标签的id属性，返回类型=bean标签的Class属性
+  public User user(){
+    return new User();
+  }
+}
+```
+
+对应工厂为：
+
+```java
+// 这种方式是直接加载配置类
+ApplicationContext cxt = new AnnotationConfigApplicationContext(Config.class);
+// 这种方式是扫描对应包下使用了@Configuration的配置类
+ApplicationContext cxt = new AnnotationConfigApplicationContext("com.test");
+```
+
+
+
+## @ConfigurationProperties
+
+属性文件配置，用于读取属性文件中一段内容
+
+```java
+@Data
+@Component
+// 读取下面配置文件中的serialnumber配置段落
+@ConfigurationProperties("serialnumber")
+public class SerialNumberProperties {
+    private String bizCode;
+    private String prefix;
+}
+```
+
+属性文件
+
+```properties
+server:
+	port: 8080
+serialnumber:
+  host: localhost:8888
+  bizCode: test
+  prefix: AP
 ```
 
 
 
 ## AOP
+
+Aop是一个标准，Spring AOP 是它的一种实现
 
 * `启用aop` @EnableAspectJAutoProxy
 
@@ -615,6 +973,7 @@ public class AppConfig {
 
 }
 ```
+
 * `配置切面` @Aspect
 
 ```
@@ -623,6 +982,7 @@ public class NotVeryUsefulAspect {
 
 }
 ```
+
 * `配置切点` @Pointcut
 
 ```
@@ -632,6 +992,7 @@ public class NotVeryUsefulAspect {
     private void anyOldTransfer() {} // 切点实现方法
 }
 ```
+
 * `配置通知` 
 
 ```
@@ -886,7 +1247,9 @@ rollbackOn(Throwable ex) : 回滚扩展方法
 ```
 
 ## NameSpaceHandler
+
 自定义标签配置，如<zjf:user/>
+
 1. 继承NameSpaceHandler
 2. 实现init()方法
 3. 自定义BeanDefinitionParser实现类
@@ -895,128 +1258,9 @@ rollbackOn(Throwable ex) : 回滚扩展方法
 
 
 
-
-
-问题
-
-condition
+### 自定义实现jar包，如何托管给spring
 
 ```
-@Configuration
-```
-
-```
-@ConfigurationClass
-@ConfigurationProperties
-@compent
-@Service
-@Import
-等等原理
-```
-
-
-
-## @Configuration
-
-配置Bean，Spring在3.x开始提供的注解，用于替换XML文件。它也是@Component注解的衍生（扩展），其内部使用了@Component，通过AOP生成Cglib代理对象
-
-
-
-在使用方面，之前是这么配置的
-
-```xml
-<beans>
-  <!-- import配置文件 -->
-	<import resoure="classpath:/applicationContext.cml"/>
-  <!-- 扫描bean，如果要配置包含策略，则需要干掉Spring的默认扫描方式，use-default-filter=false -->
-  <context:compoent-scan base-package="com.test" use-default-filter="false">
-    <!-- 排除使用了Component注解的类不被扫描 -->
-    <context:exclue-filter type="annotation" expression="org.springframework.stereotype.Component"/>
-    <!-- 只扫描使用了Service的类注解 -->
-    <context:include-filter type="annotation" expression="org.springframework.stereotype.Service"/>
-    
-  </context:compoent-scan>
-  <!-- 配置bean -->
-  <bean id="user" class="com.test.User"/>
-  <bean id="product" class="com.test.Product"/>
-</beans>
-```
-
-对应的工厂为：
-
-```java
-ApplicationContext ctx = new ClassPathXmlApplicationContext("/spring.xml");
-```
-
-
-
-使用@Configuration后
-
-**注意：如果同时对一个类型，如对@Component 使用了包含策略和排除策略，则使用了@Component的类还是会被排除掉，其他类型同理**
-
-```java
-@Configuration
-// 等同xml中的context:compoent-scan标签，用于扫描需要交给Spring托管的bean
-// 比如使用了@value @Compoent @Service等等的类
-// 1.排除使用了@Component注解的类，不被扫描
-// 2.排除User类不被扫描
-// 3.通过AOP切面表达式排除com.test及子包不被扫描
-// 4.如果要使用包含策略，则需要干掉Spring默认扫描方式useDefaultFilters = false
-// 5.只扫描使用了@Component注解的类
-@ComponentScan(basePackages = "com",
-        useDefaultFilters = false,
-        excludeFilters = {
-                @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = User.class),
-                @ComponentScan.Filter(type = FilterType.ANNOTATION, classes = Component.class),
-                @ComponentScan.Filter(type = FilterType.ASPECTJ, pattern = {"com.test"})
-        },
-        includeFilters = {
-                @ComponentScan.Filter(type = FilterType.ANNOTATION, classes = Component.class)
-        })
-public class Config{
-  
-  @Bean
-  // 等同于xml中的bean标签，方法名=bean标签的id属性，返回类型=bean标签的Class属性
-  public User user(){
-    return new User();
-  }
-}
-```
-
-对应工厂为：
-
-```java
-// 这种方式是直接加载配置类
-ApplicationContext cxt = new AnnotationConfigApplicationContext(Config.class);
-// 这种方式是扫描对应包下使用了@Configuration的配置类
-ApplicationContext cxt = new AnnotationConfigApplicationContext("com.test");
-```
-
-
-
-## @ConfigurationProperties
-
-属性文件配置，用于读取属性文件中一段内容
-
-```java
-@Data
-@Component
-// 读取下面配置文件中的serialnumber配置段落
-@ConfigurationProperties("serialnumber")
-public class SerialNumberProperties {
-    private String bizCode;
-    private String prefix;
-}
-```
-
-属性文件
-
-```properties
-server:
-	port: 8080
-serialnumber:
-  host: localhost:8888
-  bizCode: test
-  prefix: AP
+通过spring.factories配置需要扫描的类全路径，springboot就是这么玩的
 ```
 
