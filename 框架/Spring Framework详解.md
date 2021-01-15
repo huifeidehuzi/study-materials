@@ -21,7 +21,7 @@ Spring其实包含了很多东西，比如AOP、IOC、Test、MVC、CACHE、Groov
 
 ### 生命周期大致流程
 
-[![sdi5Vg.png](https://s3.ax1x.com/2021/01/14/sdi5Vg.png)](https://imgchr.com/i/sdi5Vg)
+[![s0kx3j.jpg](https://s3.ax1x.com/2021/01/15/s0kx3j.jpg)](https://imgchr.com/i/s0kx3j)
 
 
 
