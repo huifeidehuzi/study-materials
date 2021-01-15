@@ -197,6 +197,19 @@ Spring其实包含了很多东西，比如AOP、IOC、Test、MVC、CACHE、Groov
       // beanType
       Class<?> beanType = (instanceWrapper != null ? instanceWrapper.getWrappedClass() : null);
       mbd.resolvedTargetType = beanType;
+      synchronized (mbd.postProcessingLock) {
+   			if (!mbd.postProcessed) {
+   				try {
+             // postProcessor处理，例如：对@Autowired的处理
+   					applyMergedBeanDefinitionPostProcessors(mbd, beanType, beanName);
+   				}
+   				catch (Throwable ex) {
+   					throw new BeanCreationException(mbd.getResourceDescription(), beanName,
+   							"Post-processing of merged bean definition failed", ex);
+   				}
+   				mbd.postProcessed = true;
+   			}
+   		}
    	 // bean是否支持循环依赖且bean正在创建中，如果支持则将bean提前暴露出来
       boolean earlySingletonExposure = (mbd.isSingleton() && this.allowCircularReferences &&
             isSingletonCurrentlyInCreation(beanName));
@@ -577,11 +590,111 @@ public class MyBeanDefinitionRegistryPostProcessor implements BeanDefinitionRegi
 
 ### @Autowired实现原理
 
-
-```
-在对象创建/构造完成后，触发属性注入
+在对象创建/构造完成后
 通过AutowiredAnnotationBeanPostProcessor后置处理器，解析使用了@Autowired的方法或者字段，封装成AutowiredMethodElement、AutowiredFieldElement，然后进行属性注入
+
+在**【实例化bean的步骤】**章节，doCreateBean方法中的applyMergedBeanDefinitionPostProcessors()方法对@Autowired进行了处理
+
+```java
+protected void applyMergedBeanDefinitionPostProcessors(RootBeanDefinition mbd, Class<?> beanType, String beanName) {
+   // 调用所有MergedBeanDefinitionPostProcessor的实现类
+   // AutowiredAnnotationBeanPostProcessor就是其中之一
+   for (BeanPostProcessor bp : getBeanPostProcessors()) {
+      if (bp instanceof MergedBeanDefinitionPostProcessor) {
+         MergedBeanDefinitionPostProcessor bdp = (MergedBeanDefinitionPostProcessor) bp;
+         bdp.postProcessMergedBeanDefinition(mbd, beanType, beanName);
+      }
+   }
+}
 ```
+
+**AutowiredAnnotationBeanPostProcessor**
+
+```java
+public void postProcessMergedBeanDefinition(RootBeanDefinition beanDefinition, Class<?> beanType, String beanName) {
+   if (beanType != null) {
+      // 处理@Autowired
+      // 其内部调用了buildAutowiringMetadata()方法，针对使用了@Autowired的方法和字段分别进行处理
+      InjectionMetadata metadata = findAutowiringMetadata(beanName, beanType, null);
+      metadata.checkConfigMembers(beanDefinition);
+   }
+}
+```
+
+**AutowiredAnnotationBeanPostProcessor#buildAutowiringMetadata()**
+
+```java
+private InjectionMetadata buildAutowiringMetadata(final Class<?> clazz) {
+   LinkedList<InjectionMetadata.InjectedElement> elements = new LinkedList<InjectionMetadata.InjectedElement>();
+   Class<?> targetClass = clazz;
+
+   do {
+      final LinkedList<InjectionMetadata.InjectedElement> currElements =
+            new LinkedList<InjectionMetadata.InjectedElement>();
+			// 对使用了@Autowired的字段进行处理，通过反射，封装成AutowiredFieldElement
+      ReflectionUtils.doWithLocalFields(targetClass, new ReflectionUtils.FieldCallback() {
+         @Override
+         public void doWith(Field field) throws IllegalArgumentException, IllegalAccessException {
+            AnnotationAttributes ann = findAutowiredAnnotation(field);
+            if (ann != null) {
+               // 注意：如果字段是静态的，则不支持注入
+               if (Modifier.isStatic(field.getModifiers())) {
+                  if (logger.isWarnEnabled()) {
+                     logger.warn("Autowired annotation is not supported on static fields: " + field);
+                  }
+                  return;
+               }
+               boolean required = determineRequiredStatus(ann);
+               currElements.add(new AutowiredFieldElement(field, required));
+            }
+         }
+      });
+			
+     	// 对使用了@Autowired的字段进行处理，通过反射，封装成AutowiredMethodElement
+      ReflectionUtils.doWithLocalMethods(targetClass, new ReflectionUtils.MethodCallback() {
+         @Override
+         public void doWith(Method method) throws IllegalArgumentException, IllegalAccessException {
+            Method bridgedMethod = BridgeMethodResolver.findBridgedMethod(method);
+            if (!BridgeMethodResolver.isVisibilityBridgeMethodPair(method, bridgedMethod)) {
+               return;
+            }
+            AnnotationAttributes ann = findAutowiredAnnotation(bridgedMethod);
+            if (ann != null && method.equals(ClassUtils.getMostSpecificMethod(method, clazz))) {
+                // 注意：如果方法是静态的，则不支持注入
+              	if (Modifier.isStatic(method.getModifiers())) {
+                  if (logger.isWarnEnabled()) {
+                     logger.warn("Autowired annotation is not supported on static methods: " + method);
+                  }
+                  return;
+               }
+               if (method.getParameterTypes().length == 0) {
+                  if (logger.isWarnEnabled()) {
+                     logger.warn("Autowired annotation should only be used on methods with parameters: " +
+                           method);
+                  }
+               }
+               boolean required = determineRequiredStatus(ann);
+               PropertyDescriptor pd = BeanUtils.findPropertyForMethod(bridgedMethod, clazz);
+               currElements.add(new AutowiredMethodElement(method, required, pd));
+            }
+         }
+      });
+
+      elements.addAll(0, currElements);
+      targetClass = targetClass.getSuperclass();
+   }
+   while (targetClass != null && targetClass != Object.class);、
+   return new InjectionMetadata(clazz, elements);
+}
+```
+
+
+
+
+
+**@Resource同理，由CommonAnnotationBeanPostProcessor处理，它也实现了MergedBeanDefinitionPostProcessor**
+
+
 
 
 
