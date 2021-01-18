@@ -61,7 +61,7 @@ Spring其实包含了很多东西，比如AOP、IOC、Test、MVC、CACHE、Groov
    }
    ```
 
-3. 调用invokeBeanFactoryPostProcessors，通过ConfigurationClassPostProcessor扫描有@Component、@Service、@Bean等注解的类封装成BeanDefinition并放到BeanDefinitionMap中，内部调用invokeBeanDefinitionRegistryPostProcessors执行BeanDefinition注册后期处理器，其内部调用了DefaultListableBeanFactory.registerBeanDefinition()方法扫描需要注册的类放到BeanDefinitionMap
+3. 调用invokeBeanFactoryPostProcessors，通过ConfigurationClassPostProcessor扫描有@Component、@Service、@Bean等注解的类封装成BeanDefinition并放到BeanDefinitionMap中（详细步骤在【ConfigurationClassPostProcessor】章节有介绍），内部调用invokeBeanDefinitionRegistryPostProcessors执行BeanDefinition注册后期处理器，其内部调用了DefaultListableBeanFactory.registerBeanDefinition()方法扫描需要注册的类放到BeanDefinitionMap
 
    ```java
    public void refresh() throws BeansException, IllegalStateException {
@@ -90,8 +90,9 @@ Spring其实包含了很多东西，比如AOP、IOC、Test、MVC、CACHE、Groov
          RootBeanDefinition bd = getMergedLocalBeanDefinition(beanName);
          // 如果BeanDefinition是抽象的、非单例的、懒加载的，是不会被实例化的
          if (!bd.isAbstract() && bd.isSingleton() && !bd.isLazyInit()) {
-            // 如果是FactoryBean的实现
+            // FactoryBean的实现
             if (isFactoryBean(beanName)) {
+               // &+name 获取bean
                final FactoryBean<?> factory = (FactoryBean<?>) getBean(FACTORY_BEAN_PREFIX + beanName);
                boolean isEagerInit;
                if (System.getSecurityManager() != null && factory instanceof SmartFactoryBean) {
@@ -190,6 +191,7 @@ Spring其实包含了很多东西，比如AOP、IOC、Test、MVC、CACHE、Groov
       if (instanceWrapper == null) {
          // 这里仅仅创建了java对象，而没有走完bean的整个流程
          // 此方法很重要
+         // 注意：如果是@Bean作用的对象，会在instantiateUsingFactoryMethod()中处理返回，而不会走实例化流程
          instanceWrapper = createBeanInstance(beanName, mbd, args);
       }
       // bean
@@ -200,7 +202,9 @@ Spring其实包含了很多东西，比如AOP、IOC、Test、MVC、CACHE、Groov
       synchronized (mbd.postProcessingLock) {
    			if (!mbd.postProcessed) {
    				try {
-             // postProcessor处理，例如：对@Autowired的处理
+             // postProcessor处理，例如：对@Autowired、@Resource的处理
+             // 比如，调用AutowiredAnnotationBeanPostProcessor#postProcessMergedBeanDefinition()方法
+             // 具体处理请看【@Autowired的实现原理】章节
    					applyMergedBeanDefinitionPostProcessors(mbd, beanType, beanName);
    				}
    				catch (Throwable ex) {
@@ -229,6 +233,8 @@ Spring其实包含了很多东西，比如AOP、IOC、Test、MVC、CACHE、Groov
          // 1.判断是否需要属性提供
          // 2.属性填充（依赖注入）
          // 3.此方法很重要
+         // 4.@Autowired和@Resource的属性填充就是在这里完成的
+         // 4.1 调用InstantiationAwareBeanPostProcessor#postProcessPropertyValues()方法
    			populateBean(beanName, mbd, instanceWrapper);
    			if (exposedObject != null) {
            // 对象创建后的初始化动作
@@ -585,6 +591,7 @@ public class MyBeanDefinitionRegistryPostProcessor implements BeanDefinitionRegi
 6. 然后调用ClassPathBeanDefinitionScanner#doScan()方法，解析@ComponentScan配置的basePackages
 7. 扫描basePackages下的所有类，获取比如使用了@Service，@Controller，@Component等注解的类
 8. 将这些类封装成BeanDefinition，调用托管给spring的beanDefinitionMap
+9. 具体原理可参考【ConfigurationClassPostProcessor】章节源码分析
 
 
 
@@ -645,6 +652,7 @@ private InjectionMetadata buildAutowiringMetadata(final Class<?> clazz) {
                   return;
                }
                boolean required = determineRequiredStatus(ann);
+               // 缓存起来，供后续注入属性使用
                currElements.add(new AutowiredFieldElement(field, required));
             }
          }
@@ -667,6 +675,7 @@ private InjectionMetadata buildAutowiringMetadata(final Class<?> clazz) {
                   }
                   return;
                }
+               // 如果方法的参数为空，则不能注入（没入参，注入个毛啊）
                if (method.getParameterTypes().length == 0) {
                   if (logger.isWarnEnabled()) {
                      logger.warn("Autowired annotation should only be used on methods with parameters: " +
@@ -675,12 +684,14 @@ private InjectionMetadata buildAutowiringMetadata(final Class<?> clazz) {
                }
                boolean required = determineRequiredStatus(ann);
                PropertyDescriptor pd = BeanUtils.findPropertyForMethod(bridgedMethod, clazz);
+               // 缓存起来，供后续注入属性使用
                currElements.add(new AutowiredMethodElement(method, required, pd));
             }
          }
       });
 
       elements.addAll(0, currElements);
+      // 递归父类，继续找@使用了@Autowired的字段和方法
       targetClass = targetClass.getSuperclass();
    }
    while (targetClass != null && targetClass != Object.class);、
@@ -688,11 +699,306 @@ private InjectionMetadata buildAutowiringMetadata(final Class<?> clazz) {
 }
 ```
 
+**AutowiredMethodElement和AutowiredFieldElement都是继承InjectionMetadata，且实现了inject()方法**
+
+在doCreateBean方法中，调用AutowiredAnnotationBeanPostProcessor#postProcessMergedBeanDefinition()执行完后，继续往下走，会执行populateBean()方法进行属性的依赖注入，此方法中会调用InstantiationAwareBeanPostProcessor#postProcessPropertyValues()进行属性注入
+
+AutowiredAnnotationBeanPostProcessor和CommonAnnotationBeanPostProcessor都实现了此接口，所以@Autowired和@Resource的注入都会在此方法中处理
+
+```java
+public PropertyValues postProcessPropertyValues(
+      PropertyValues pvs, PropertyDescriptor[] pds, Object bean, String beanName) throws BeanCreationException {
+	 // 从缓存获取元数据
+   InjectionMetadata metadata = findAutowiringMetadata(beanName, bean.getClass(), pvs);
+   try {
+      // 属性注入，细节这里不阐述了，太多了
+      metadata.inject(bean, beanName, pvs);
+   }
+   catch (BeanCreationException ex) {
+      throw ex;
+   }
+   catch (Throwable ex) {
+      throw new BeanCreationException(beanName, "Injection of autowired dependencies failed", ex);
+   }
+   return pvs;
+}
+```
+
+
+
 
 
 
 
 **@Resource同理，由CommonAnnotationBeanPostProcessor处理，它也实现了MergedBeanDefinitionPostProcessor**
+
+
+
+### ConfigurationClassPostProcessor
+
+ConfigurationClassPostProcessor主要功能是处理各种注解，如@Import、@ImportResource、@Bean、@ComponentScan和@ComponentScans注解
+
+```java
+// 实现了BeanDefinitionRegistryPostProcessor
+// 实现了2个方法：postProcessBeanDefinitionRegistry和postProcessBeanFactory，这里只介绍前者
+public class ConfigurationClassPostProcessor implements BeanDefinitionRegistryPostProcessor,
+      PriorityOrdered, ResourceLoaderAware, BeanClassLoaderAware, EnvironmentAware {
+  
+    // 注册bean到BeanDefinitionMap
+    @Override
+    public void postProcessBeanDefinitionRegistry(BeanDefinitionRegistry registry) {
+      int registryId = System.identityHashCode(registry);
+      if (this.registriesPostProcessed.contains(registryId)) {
+        throw new IllegalStateException(
+            "postProcessBeanDefinitionRegistry already called on this post-processor against " + registry);
+      }
+      if (this.factoriesPostProcessed.contains(registryId)) {
+        throw new IllegalStateException(
+            "postProcessBeanFactory already called on this post-processor against " + registry);
+      }
+      this.registriesPostProcessed.add(registryId);
+      // 入口在这
+      processConfigBeanDefinitions(registry);
+    }
+}
+```
+
+**ConfigurationClassPostProcessor#processConfigBeanDefinitions()**
+
+```java
+public void processConfigBeanDefinitions(BeanDefinitionRegistry registry) {
+   // 省略部分代码
+   do {
+      // 解析各种注解，包含@Bean，主要逻辑在这里
+      parser.parse(candidates);
+     
+      // 省略部分代码
+     
+     	// 这里对解析出来的BeanDefinition做处理
+      // 在上面的parse()方法中，对@Bean方法已经做处理了
+      this.reader.loadBeanDefinitions(configClasses);
+     
+      // 省略部分代码
+   }
+   while (!candidates.isEmpty());
+   // 省略部分代码
+}
+```
+
+**ConfigurationClassParser#parse()**
+
+底层调用内部方法：ConfigurationClassParser()
+
+```java
+protected final SourceClass doProcessConfigurationClass(ConfigurationClass configClass, SourceClass sourceClass)
+      throws IOException {
+
+   // 处理@PropertySource注册
+   // Process any @PropertySource annotations
+   for (AnnotationAttributes propertySource : AnnotationConfigUtils.attributesForRepeatable(
+         sourceClass.getMetadata(), PropertySources.class,
+         org.springframework.context.annotation.PropertySource.class)) {
+      if (this.environment instanceof ConfigurableEnvironment) {
+         processPropertySource(propertySource);
+      }
+      else {
+         logger.warn("Ignoring @PropertySource annotation on [" + sourceClass.getMetadata().getClassName() +
+               "]. Reason: Environment must implement ConfigurableEnvironment");
+      }
+   }
+	 // 处理@ComponentScan和ComponentScans注解
+   // Process any @ComponentScan annotations
+   Set<AnnotationAttributes> componentScans = AnnotationConfigUtils.attributesForRepeatable(
+         sourceClass.getMetadata(), ComponentScans.class, ComponentScan.class);
+   if (!componentScans.isEmpty() &&
+         !this.conditionEvaluator.shouldSkip(sourceClass.getMetadata(), ConfigurationPhase.REGISTER_BEAN)) {
+      // 循环处理
+      for (AnnotationAttributes componentScan : componentScans) {
+         // 扫描到使用了@Component、@Service、@Controller等注册的类
+         Set<BeanDefinitionHolder> scannedBeanDefinitions =
+               this.componentScanParser.parse(componentScan, sourceClass.getMetadata().getClassName());
+         // Check the set of scanned definitions for any further config classes and parse recursively if needed
+         for (BeanDefinitionHolder holder : scannedBeanDefinitions) {
+            BeanDefinition bdCand = holder.getBeanDefinition().getOriginatingBeanDefinition();
+            if (bdCand == null) {
+               bdCand = holder.getBeanDefinition();
+            }
+            if (ConfigurationClassUtils.checkConfigurationClassCandidate(bdCand, this.metadataReaderFactory)) {
+               parse(bdCand.getBeanClassName(), holder.getBeanName());
+            }
+         }
+      }
+   }
+		
+   // 处理@Import注解
+   // Process any @Import annotations
+   processImports(configClass, sourceClass, getImports(sourceClass), true);
+
+   // 处理@ImportResource注解
+   // Process any @ImportResource annotations
+   if (sourceClass.getMetadata().isAnnotated(ImportResource.class.getName())) {
+      AnnotationAttributes importResource =
+            AnnotationConfigUtils.attributesFor(sourceClass.getMetadata(), ImportResource.class);
+      String[] resources = importResource.getStringArray("locations");
+      Class<? extends BeanDefinitionReader> readerClass = importResource.getClass("reader");
+      for (String resource : resources) {
+         String resolvedResource = this.environment.resolveRequiredPlaceholders(resource);
+         configClass.addImportedResource(resolvedResource, readerClass);
+      }
+   }
+	
+   // 处理@Bean作用的方法，添加到Set<BeanMethod>中
+   // Process individual @Bean methods
+   Set<MethodMetadata> beanMethods = retrieveBeanMethodMetadata(sourceClass);
+   for (MethodMetadata methodMetadata : beanMethods) {
+      configClass.addBeanMethod(new BeanMethod(methodMetadata, configClass));
+   }
+
+   // 处理接口的默认方法
+   // Process default methods on interfaces
+   processInterfaces(configClass, sourceClass);
+
+   // Process superclass, if any
+   if (sourceClass.getMetadata().hasSuperClass()) {
+      String superclass = sourceClass.getMetadata().getSuperClassName();
+      if (!superclass.startsWith("java") && !this.knownSuperclasses.containsKey(superclass)) {
+         this.knownSuperclasses.put(superclass, configClass);
+         // Superclass found, return its annotation metadata and recurse
+         return sourceClass.getSuperClass();
+      }
+   }
+
+   // No superclass -> processing is complete
+   return null;
+}
+```
+
+
+
+**ConfigurationClassBeanDefinitionReader#loadBeanDefinitions()**
+
+```java
+public void loadBeanDefinitions(Set<ConfigurationClass> configurationModel) {
+   TrackedConditionEvaluator trackedConditionEvaluator = new TrackedConditionEvaluator();
+   for (ConfigurationClass configClass : configurationModel) {
+      // 其底层最终调用ConfigurationClassBeanDefinitionReader#loadBeanDefinitionsForBeanMethod()
+      loadBeanDefinitionsForConfigurationClass(configClass, trackedConditionEvaluator);
+   }
+}
+```
+
+**ConfigurationClassBeanDefinitionReader#loadBeanDefinitionsForBeanMethod()**
+
+```java
+private void loadBeanDefinitionsForBeanMethod(BeanMethod beanMethod) {
+   ConfigurationClass configClass = beanMethod.getConfigurationClass();
+   MethodMetadata metadata = beanMethod.getMetadata();
+   // 获取@Bean对象的方法名
+   String methodName = metadata.getMethodName();
+
+   // Do we need to mark the bean as skipped by its condition?
+   // 是否需要根据配置的condition条件跳过
+   if (this.conditionEvaluator.shouldSkip(metadata, ConfigurationPhase.REGISTER_BEAN)) {
+      configClass.skippedBeanMethods.add(methodName);
+      return;
+   }
+   if (configClass.skippedBeanMethods.contains(methodName)) {
+      return;
+   }
+
+   // 获取@Bean的注解配置，如：autowire、destroyMethod、name、initMethod等等
+   AnnotationAttributes bean = AnnotationConfigUtils.attributesFor(metadata, Bean.class);
+   List<String> names = new ArrayList<String>(Arrays.asList(bean.getStringArray("name")));
+   // bena的名称，优先取：自定义名称
+   String beanName = (!names.isEmpty() ? names.remove(0) : methodName);
+
+   // 注册别名
+   for (String alias : names) {
+      this.registry.registerAlias(beanName, alias);
+   }
+
+   // Has this effectively been overridden before (e.g. via XML)?
+   if (isOverriddenByExistingDefinition(beanMethod, beanName)) {
+      if (beanName.equals(beanMethod.getConfigurationClass().getBeanName())) {
+         throw new BeanDefinitionStoreException(beanMethod.getConfigurationClass().getResource().getDescription(),
+               beanName, "Bean name derived from @Bean method '" + beanMethod.getMetadata().getMethodName() +
+               "' clashes with bean name for containing configuration class; please make those names unique!");
+      }
+      return;
+   }
+	 // ConfigurationClassBeanDefinition
+   ConfigurationClassBeanDefinition beanDef = new ConfigurationClassBeanDefinition(configClass, metadata);
+   beanDef.setResource(configClass.getResource());
+   beanDef.setSource(this.sourceExtractor.extractSource(metadata, configClass.getResource()));
+	 
+   // 如果@Bean描述的方法是static的
+   if (metadata.isStatic()) {
+      // static @Bean method
+      // 设置BeanClassName为@Configuration描述类的className
+      beanDef.setBeanClassName(configClass.getMetadata().getClassName());
+      // 设置工厂方法
+      beanDef.setFactoryMethodName(methodName);
+   }
+   else {
+      // instance @Bean method
+      // 设置FactoryBeanName，就是@Configuration描述类的beanName
+      beanDef.setFactoryBeanName(configClass.getBeanName());
+      // 设置工厂方法
+      beanDef.setUniqueFactoryMethodName(methodName);
+   }
+   // 设置注入模型，默认为：构造方法注入
+   beanDef.setAutowireMode(RootBeanDefinition.AUTOWIRE_CONSTRUCTOR);
+   // 设置属性
+   beanDef.setAttribute(RequiredAnnotationBeanPostProcessor.SKIP_REQUIRED_CHECK_ATTRIBUTE, Boolean.TRUE);
+
+   AnnotationConfigUtils.processCommonDefinitionAnnotations(beanDef, metadata);
+	 // 设置注入模型
+   Autowire autowire = bean.getEnum("autowire");
+   if (autowire.isAutowire()) {
+      beanDef.setAutowireMode(autowire.value());
+   }
+	 // 初始化方法
+   String initMethodName = bean.getString("initMethod");
+   if (StringUtils.hasText(initMethodName)) {
+      beanDef.setInitMethodName(initMethodName);
+   }
+	 // 销毁方法
+   String destroyMethodName = bean.getString("destroyMethod");
+   if (destroyMethodName != null) {
+      beanDef.setDestroyMethodName(destroyMethodName);
+   }
+
+   // 作用域
+   ScopedProxyMode proxyMode = ScopedProxyMode.NO;
+   AnnotationAttributes attributes = AnnotationConfigUtils.attributesFor(metadata, Scope.class);
+   if (attributes != null) {
+      beanDef.setScope(attributes.getString("value"));
+      proxyMode = attributes.getEnum("proxyMode");
+      if (proxyMode == ScopedProxyMode.DEFAULT) {
+         proxyMode = ScopedProxyMode.NO;
+      }
+   }
+
+   // Replace the original bean definition with the target one, if necessary
+   BeanDefinition beanDefToRegister = beanDef;
+   if (proxyMode != ScopedProxyMode.NO) {
+      BeanDefinitionHolder proxyDef = ScopedProxyCreator.createScopedProxy(
+            new BeanDefinitionHolder(beanDef, beanName), this.registry,
+            proxyMode == ScopedProxyMode.TARGET_CLASS);
+      beanDefToRegister = new ConfigurationClassBeanDefinition(
+            (RootBeanDefinition) proxyDef.getBeanDefinition(), configClass, metadata);
+   }
+
+   if (logger.isDebugEnabled()) {
+      logger.debug(String.format("Registering bean definition for @Bean method %s.%s()",
+            configClass.getMetadata().getClassName(), beanName));
+   }
+	 // 最终，注册到BeanDefinitionMap
+   this.registry.registerBeanDefinition(beanName, beanDefToRegister);
+}
+```
+
+**注：如果有2个返回相同类型对象的方法使用了@Bean，会报错，因为getBean的时候不知道用哪个，如果再其中一个方法上加上了@Primary，则getBean会返回此bean，如果2个方法加上了@Primary，则报错，因为因为getBean的时候不知道用哪个**
 
 
 
@@ -1026,8 +1332,12 @@ ApplicationContext ctx = new ClassPathXmlApplicationContext("/spring.xml");
         })
 public class Config{
   
-  @Bean
   // 等同于xml中的bean标签，方法名=bean标签的id属性，返回类型=bean标签的Class属性
+  @Bean
+  // 是否主要的，如果设置了，则以此bean为主，覆盖其他同类型的bean
+  // 比如，有2个@bean 返回user，如果其中1个使用了@Primary，则getBean的时候返回使用了@Primary的bean
+  // 注：如果2个都使用了@Primary，则报错，因为getBean不知道用哪个，如果2个都没用@Primary，也会报错，因为getBean也不知道用哪个
+  @Primary
   public User user(){
     return new User();
   }
