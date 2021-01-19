@@ -219,11 +219,18 @@ Spring其实包含了很多东西，比如AOP、IOC、Test、MVC、CACHE、Groov
             isSingletonCurrentlyInCreation(beanName));
       // 支持循环依赖
       if (earlySingletonExposure) {
-         // 将创建中的对象提前暴露出来，放到三级缓存中，同时从二级缓存中移除
-         // 主要是为了解决循环依赖的问题
+         // 如果支持循环依赖，则将实例化后，注入属性之前的对象包装成factory，放到三级缓存中，同时从二级缓存中移除
+         // 此方法主要是为了解决AOP循环依赖的问题，普通的循环依赖，三级缓存是没用的
+         // 此方法逻辑：
+         // 1. 如果一级缓存没有此bean，则放入三级缓存，同时从二级缓存移除。反之，一级缓存有，则不做任何操作
+         // 2. 那么下次获取bean的时候会直接从三级缓存的工厂创建代理对象
+         // 所以：普通的循环依赖，三级缓存是没用的
+         // 流程走到这里，其实Spring是不知道当前的bean是否与其他bean有循环依赖，所以干脆都放到三级缓存中
          addSingletonFactory(beanName, new ObjectFactory<Object>() {
             @Override
             public Object getObject() throws BeansException {
+               // 如果是AOP代理对象，这里是调用AbstractAutoProxyCreator#getEarlyBeanReference()方法,返回代理对象
+               // 如果不是，则调用的是InstantiationAwareBeanPostProcessorAdapter#getEarlyBeanReference()方法，什么也不做，返回传入的bean
                return getEarlyBeanReference(beanName, mbd, bean);
             }
          });
@@ -235,6 +242,7 @@ Spring其实包含了很多东西，比如AOP、IOC、Test、MVC、CACHE、Groov
          // 3.此方法很重要
          // 4.@Autowired和@Resource的属性填充就是在这里完成的
          // 4.1 调用InstantiationAwareBeanPostProcessor#postProcessPropertyValues()方法
+         // 5.循环依赖请查看【如何解决循环依赖】章节
    			populateBean(beanName, mbd, instanceWrapper);
    			if (exposedObject != null) {
            // 对象创建后的初始化动作
@@ -1019,12 +1027,10 @@ private void loadBeanDefinitionsForBeanMethod(BeanMethod beanMethod) {
 
 比如有2个类，A和B，互相引用
 
-    1.  首先A被创建，此时A会被放到singletonsCurrentlyInCreation这个set集合中，表示该对象是在创建过程中
-       2.  经过一系列流程，到自动注入时获取B(getBean(B)),此时B并没有被实例化(signleObjects中没有)，就会创建B
-       3.  B经过一系列流程，到自动注入时获取A(getBean(A))，发现A正在创建过程中(isSingletonCurrentlyInCreation(A)为ture)，于是从earlySingletonObjects(存放对象集合，map)中获取到A，如果取不到A，则从SignletonFactory.getObject()取A，因为实例化B并不需要A这个bean，只需要A对象
-       4.  此时B就能被实例化成bean，A接下来获取到B也能实例化
-       5.  获取循环依赖对象过程：先从singletonObjects拿，拿不到从earlySingletonObjects拿，再拿不到就从SignletonFactory拿，
-           拿到后会put到earlySingletonObjects里同时从SignletonFactory移除掉，再有循环依赖的对象需要获取它的话，直接从earlySingletonObjects获取即可。因为直接从SignletonFactory.getObject拿的话性能不太高，getObject()会获取所有BeanPostProcessor做处理。 试想下，一个对象如果被多次循环引用。而SignletonFactory.getObject创建对象需要2秒，可想而知性能有多慢。
+1.  首先A被创建，此时A会被放到singletonsCurrentlyInCreation这个set集合中，表示该对象是在创建过程
+2.  经过一系列流程，到自动注入时获取B(getBean(B)),此时B并没有被实例化(signleObjects中没有)，就会创建B
+3.  B经过一系列流程，到自动注入时获取A(getBean(A))，发现A正在创建过程中(isSingletonCurrentlyInCreation(A)为ture)，于是从earlySingletonObjects(存放对象集合，map)中获取到A，如果取不到A，则从SignletonFactory.getObject()取A，因为实例化B并不需要A这个bean，只需要A对象
+4.  此时B就能被实例化成bean，A接下来获取到B也能实例化
 
 
 
@@ -1032,11 +1038,19 @@ private void loadBeanDefinitionsForBeanMethod(BeanMethod beanMethod) {
 
 - **earlySingletonObjects：存放早期的bean对象，此时还不是真正的bean。2级缓存**
 
-- **SignletonFactory：存放工厂，解决循环依赖aop的问题，比如A和B循环依赖，A被aop，当A注入属性时获取B，B也能被Aop代理。3级缓存**
+- **SignletonFactory：存放工厂，解决aop对象循环依赖的问题，比如A和B循环依赖，A被aop，当A注入属性时获取B，B也能被Aop代理。3级缓存**
 
 - **以上3个缓存，都存放在DefaultSingletonBeanRegistry中**
 
-  
+
+
+#### 为什么不能解决决构造方法注入的循环依赖？
+
+因为在doCreateBean(方法中，调用构造方法创建对象是在createBeanInstance()方法这一步，这一步是在populateBean()属性注入方法之前的，由于这个执行顺序，所以不能解决构造方法的循环依赖
+
+比如：有A、B2个对象，调用构造方法创建实例时，每次都要new一个要构造的实例bean，而A创建时，依赖B，就去创建B，B又依赖了A，继续构造A，如此循环下去 A(B) B(A) A(B)->.....
+
+
 
 ### BeanDefinition
 
