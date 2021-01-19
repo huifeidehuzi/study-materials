@@ -244,6 +244,7 @@ Spring其实包含了很多东西，比如AOP、IOC、Test、MVC、CACHE、Groov
            // 2.BeanPostProcessor.before()方法
            // 3.invokeInitMethods()方法，也就是@PostConstruct修饰的方法、InitializingBean、init()方法
            // 4.BeanPostProcessor.after方法，如AOP等
+           // 5.原理可参考【AOP实现原理】章节
    				exposedObject = initializeBean(beanName, exposedObject, mbd);
    			}
    		}
@@ -1387,9 +1388,11 @@ serialnumber:
 
 Aop是一个标准，Spring AOP 是它的一种实现
 
+### 使用
+
 * `启用aop` @EnableAspectJAutoProxy
 
-```
+```java
 @Configuration
 @EnableAspectJAutoProxy
 public class AppConfig {
@@ -1399,7 +1402,7 @@ public class AppConfig {
 
 * `配置切面` @Aspect
 
-```
+```java
 @Aspect
 public class NotVeryUsefulAspect {
 
@@ -1408,7 +1411,7 @@ public class NotVeryUsefulAspect {
 
 * `配置切点` @Pointcut
 
-```
+```java
 @Aspect
 public class NotVeryUsefulAspect {
     @Pointcut("execution(* transfer(..))") // 切点表达式
@@ -1416,9 +1419,9 @@ public class NotVeryUsefulAspect {
 }
 ```
 
-* `配置通知` 
+* `配置通知` **Advice**
 
-```
+```java
 @Aspect
 public class BeforeExample {
     
@@ -1441,15 +1444,128 @@ public class BeforeExample {
 }
 ```
 
-* `原理`
 
-```
+
+### 实现原理
+
 实现BeanPostProcessor, 在ioc doCreateBean() 方法中调用实现BeanPostProcessor的实现类(AnnotationAwareAspectJAutoProxyCreator)，完成对bean的aop增强并返回增强的代理对象(bean)。
 
-通过aopProxy 生成aop代理对象。
-aopProxy 有2个实现类 JDKDynamicAopProxy 和  cglibAopProxy
+通过AopProxy 生成aop代理对象。
+AopProxy 有2个实现类 JDKDynamicAopProxy 和  CglibAopProxy
 通过bean，执行不同的代理方式
+
+参考【实例化Bean的步骤】章节中，doCreateBean()方法中的initializeBean()中，实现了AOP的后置处理
+
+```java
+protected Object initializeBean(final String beanName, final Object bean, RootBeanDefinition mbd) {
+   if (System.getSecurityManager() != null) {
+      AccessController.doPrivileged(new PrivilegedAction<Object>() {
+         @Override
+         public Object run() {
+            // 执行三个Aware回调方法
+            invokeAwareMethods(beanName, bean);
+            return null;
+         }
+      }, getAccessControlContext());
+   }
+   else {
+      // 执行三个Aware回调方法
+      invokeAwareMethods(beanName, bean);
+   }
+
+   Object wrappedBean = bean;
+   if (mbd == null || !mbd.isSynthetic()) {
+      // 执行BeanPostProcessor.before方法
+      wrappedBean = applyBeanPostProcessorsBeforeInitialization(wrappedBean, beanName);
+   }
+
+   try {
+      // 执行init方法
+      invokeInitMethods(beanName, wrappedBean, mbd);
+   }
+   catch (Throwable ex) {
+      throw new BeanCreationException(
+            (mbd != null ? mbd.getResourceDescription() : null),
+            beanName, "Invocation of init method failed", ex);
+   }
+   if (mbd == null || !mbd.isSynthetic()) {
+      // 重点：这里是执行BeanPostProcessor.after方法，AOP实现就是其中之一
+      // AOP的BeanPostProcessor实现为：
+      wrappedBean = applyBeanPostProcessorsAfterInitialization(wrappedBean, beanName);
+   }
+   return wrappedBean;
+}
 ```
+
+```java
+public Object applyBeanPostProcessorsAfterInitialization(Object existingBean, String beanName)
+      throws BeansException {
+
+   Object result = existingBean;
+   // 循环所有的处理器，执行after方法，aop的处理实现为：AbstractAutoProxyCreator
+   for (BeanPostProcessor beanProcessor : getBeanPostProcessors()) {
+      result = beanProcessor.postProcessAfterInitialization(result, beanName);
+      if (result == null) {
+         return result;
+      }
+   }
+   return result;
+}
+```
+
+继续看下AbstractAutoProxyCreator是怎么创建AOP代理对象的
+
+AbstractAutoProxyCreator#postProcessAfterInitialization()
+
+```java
+public Object postProcessAfterInitialization(Object bean, String beanName) throws BeansException {
+   if (bean != null) {
+      // 先获取缓存，因为创建好代理对象后，会将代理对象缓存起来，不可能每次都创建代理
+      Object cacheKey = getCacheKey(bean.getClass(), beanName);
+      if (!this.earlyProxyReferences.contains(cacheKey)) {
+         // 生成AOP代理对象逻辑在这
+         return wrapIfNecessary(bean, beanName, cacheKey);
+      }
+   }
+   return bean;
+}
+```
+
+AbstractAutoProxyCreator#wrapIfNecessary()
+
+```java
+protected Object wrapIfNecessary(Object bean, String beanName, Object cacheKey) {
+   if (beanName != null && this.targetSourcedBeans.contains(beanName)) {
+      return bean;
+   }
+   if (Boolean.FALSE.equals(this.advisedBeans.get(cacheKey))) {
+      return bean;
+   }
+   if (isInfrastructureClass(bean.getClass()) || shouldSkip(bean.getClass(), beanName)) {
+      this.advisedBeans.put(cacheKey, Boolean.FALSE);
+      return bean;
+   }
+
+   // 创建代理对象，前提是配置了advice增强
+   // Create proxy if we have advice.
+   Object[] specificInterceptors = getAdvicesAndAdvisorsForBean(bean.getClass(), beanName, null);
+   if (specificInterceptors != DO_NOT_PROXY) {
+      this.advisedBeans.put(cacheKey, Boolean.TRUE);
+      // 创建代理对象，通过ProxyFactory.getProxy()创建
+      Object proxy = createProxy(
+            bean.getClass(), beanName, specificInterceptors, new SingletonTargetSource(bean));
+      // 将代理对象缓存起来
+      this.proxyTypes.put(cacheKey, proxy.getClass());
+      return proxy;
+   }
+   this.advisedBeans.put(cacheKey, Boolean.FALSE);
+   return bean;
+}
+```
+
+
+
+
 
 
 ## 事务
