@@ -27,6 +27,7 @@ class FeignClientsRegistrar implements ImportBeanDefinitionRegistrar,
    // 省略部分代码
    
    // 实现ImportBeanDefinitionRegistrar
+   // 此方法会在IOC流程中的ConfigurationClass调用
    // 将声明的fegin接口托管给Spring
    @Override
    public void registerBeanDefinitions(AnnotationMetadata metadata,
@@ -160,170 +161,8 @@ private void registerFeignClient(BeanDefinitionRegistry registry,
 ```java
 class FeignClientFactoryBean implements FactoryBean<Object>, InitializingBean,
 		ApplicationContextAware {
-	/***********************************
-	 * WARNING! Nothing in this class should be @Autowired. It causes NPEs because of some lifecycle race condition.
-	 ***********************************/
-
-	private Class<?> type;
-
-	private String name;
-
-	private String url;
-
-	private String path;
-
-	private boolean decode404;
-
-	private ApplicationContext applicationContext;
-
-	private Class<?> fallback = void.class;
-
-	private Class<?> fallbackFactory = void.class;
-
-	@Override
-	public void afterPropertiesSet() throws Exception {
-		Assert.hasText(this.name, "Name must be set");
-	}
-
-	@Override
-	public void setApplicationContext(ApplicationContext context) throws BeansException {
-		this.applicationContext = context;
-	}
-
-	protected Feign.Builder feign(FeignContext context) {
-		FeignLoggerFactory loggerFactory = get(context, FeignLoggerFactory.class);
-		Logger logger = loggerFactory.create(this.type);
-
-		// @formatter:off
-		Feign.Builder builder = get(context, Feign.Builder.class)
-				// required values
-				.logger(logger)
-				.encoder(get(context, Encoder.class))
-				.decoder(get(context, Decoder.class))
-				.contract(get(context, Contract.class));
-		// @formatter:on
-
-		configureFeign(context, builder);
-
-		return builder;
-	}
-
-	protected void configureFeign(FeignContext context, Feign.Builder builder) {
-		FeignClientProperties properties = applicationContext.getBean(FeignClientProperties.class);
-		if (properties != null) {
-			if (properties.isDefaultToProperties()) {
-				configureUsingConfiguration(context, builder);
-				configureUsingProperties(properties.getConfig().get(properties.getDefaultConfig()), builder);
-				configureUsingProperties(properties.getConfig().get(this.name), builder);
-			} else {
-				configureUsingProperties(properties.getConfig().get(properties.getDefaultConfig()), builder);
-				configureUsingProperties(properties.getConfig().get(this.name), builder);
-				configureUsingConfiguration(context, builder);
-			}
-		} else {
-			configureUsingConfiguration(context, builder);
-		}
-	}
-
-	protected void configureUsingConfiguration(FeignContext context, Feign.Builder builder) {
-		Logger.Level level = getOptional(context, Logger.Level.class);
-		if (level != null) {
-			builder.logLevel(level);
-		}
-		Retryer retryer = getOptional(context, Retryer.class);
-		if (retryer != null) {
-			builder.retryer(retryer);
-		}
-		ErrorDecoder errorDecoder = getOptional(context, ErrorDecoder.class);
-		if (errorDecoder != null) {
-			builder.errorDecoder(errorDecoder);
-		}
-		Request.Options options = getOptional(context, Request.Options.class);
-		if (options != null) {
-			builder.options(options);
-		}
-		Map<String, RequestInterceptor> requestInterceptors = context.getInstances(
-				this.name, RequestInterceptor.class);
-		if (requestInterceptors != null) {
-			builder.requestInterceptors(requestInterceptors.values());
-		}
-
-		if (decode404) {
-			builder.decode404();
-		}
-	}
-
-	protected void configureUsingProperties(FeignClientProperties.FeignClientConfiguration config, Feign.Builder builder) {
-		if (config == null) {
-			return;
-		}
-
-		if (config.getLoggerLevel() != null) {
-			builder.logLevel(config.getLoggerLevel());
-		}
-
-		if (config.getConnectTimeout() != null && config.getReadTimeout() != null) {
-			builder.options(new Request.Options(config.getConnectTimeout(), config.getReadTimeout()));
-		}
-
-		if (config.getRetryer() != null) {
-			Retryer retryer = getOrInstantiate(config.getRetryer());
-			builder.retryer(retryer);
-		}
-
-		if (config.getErrorDecoder() != null) {
-			ErrorDecoder errorDecoder = getOrInstantiate(config.getErrorDecoder());
-			builder.errorDecoder(errorDecoder);
-		}
-
-		if (config.getRequestInterceptors() != null && !config.getRequestInterceptors().isEmpty()) {
-			// this will add request interceptor to builder, not replace existing
-			for (Class<RequestInterceptor> bean : config.getRequestInterceptors()) {
-				RequestInterceptor interceptor = getOrInstantiate(bean);
-				builder.requestInterceptor(interceptor);
-			}
-		}
-
-		if (config.getDecode404() != null) {
-			if (config.getDecode404()) {
-				builder.decode404();
-			}
-		}
-	}
-
-	private <T> T getOrInstantiate(Class<T> tClass) {
-		try {
-			return applicationContext.getBean(tClass);
-		} catch (NoSuchBeanDefinitionException e) {
-			return BeanUtils.instantiateClass(tClass);
-		}
-	}
-
-	protected <T> T get(FeignContext context, Class<T> type) {
-		T instance = context.getInstance(this.name, type);
-		if (instance == null) {
-			throw new IllegalStateException("No bean found of type " + type + " for "
-					+ this.name);
-		}
-		return instance;
-	}
-
-	protected <T> T getOptional(FeignContext context, Class<T> type) {
-		return context.getInstance(this.name, type);
-	}
-
-	protected <T> T loadBalance(Feign.Builder builder, FeignContext context,
-			HardCodedTarget<T> target) {
-		Client client = getOptional(context, Client.class);
-		if (client != null) {
-			builder.client(client);
-			Targeter targeter = get(context, Targeter.class);
-			return targeter.target(this, builder, context, target);
-		}
-
-		throw new IllegalStateException(
-				"No Feign Client for loadBalancing defined. Did you forget to include spring-cloud-starter-netflix-ribbon?");
-	}
+	
+  // 省略部分接口
 
 	@Override
 	public Object getObject() throws Exception {
@@ -447,3 +286,17 @@ public <T> T newInstance(Target<T> target) {
   return proxy;
 }
 ```
+
+
+
+## 总结
+
+1. 使用fegin，需开启@EnableFeignClients
+
+2. @EnableFeignClients中通过@Import(FeignClientsRegistrar.class)来实现扫描fegin接口
+
+3. 根据@EnableFeignClients配置的扫描包或者clients扫描需要注册的fegin接口，将fegin接口注册成BeanDefinition托管给Spring
+
+4. 通过FeignClientFactoryBean.getObject()方法，将注册的BeanDefinition通过JDK代理生成代理类
+
+   
