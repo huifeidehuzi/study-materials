@@ -42,11 +42,23 @@ Spring其实包含了很多东西，比如AOP、IOC、Test、MVC、CACHE、Groov
        }
    }
    public class GenericApplicationContext extends AbstractApplicationContext implements BeanDefinitionRegistry {
-   	// 初始化工厂，默认为DefaultListableBeanFactory
+   	// 1. 初始化工厂，默认为DefaultListableBeanFactory
    	public GenericApplicationContext() {
    		this.beanFactory = new DefaultListableBeanFactory();
    	}
    }
+   
+   // 2. AnnotationConfigApplicationContext无参构造
+   public AnnotationConfigApplicationContext() {
+       // 初始化 读取器，用来注册”配置类“
+       // 如：在AnnotationConfigApplicationContext(Class<?>... annotatedClasses)中的register()方法
+   		this.reader = new AnnotatedBeanDefinitionReader(this);
+       // 初始化 扫描器，用于扫描传入的basepackages中的类并且注册为BeanDefinition放到BeanDefinitionMap
+       // 如：在AnnotationConfigApplicationContext(String... basePackages)中的scan()方法
+   		this.scanner = new ClassPathBeanDefinitionScanner(this);
+   }
+   
+   
    ```
    
 2. 扫描配置的config类，封装成BeanDefinition放到BeanDefinitionMap
@@ -55,6 +67,7 @@ Spring其实包含了很多东西，比如AOP、IOC、Test、MVC、CACHE、Groov
    public AnnotationConfigApplicationContext(Class<?>... annotatedClasses) {
    		// 这一步将配置类封装成BeanDefinition放到BeanDefinitionMap
        // 内部调用BeanDefinitionRegistry#registerBeanDefinition()方法注册的，就不细讲了
+       // 这里调用的是AnnotatedBeanDefinitionReader#register()方法
        register(annotatedClasses);
        // 这个先忽略
        // refresh();
