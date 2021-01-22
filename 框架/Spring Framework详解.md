@@ -1044,11 +1044,58 @@ private void loadBeanDefinitionsForBeanMethod(BeanMethod beanMethod) {
 
 
 
-#### 为什么不能解决决构造方法注入的循环依赖？
+#### 为什么要使用三级缓存呢？二级缓存能解决循环依赖吗？
 
-因为在doCreateBean(方法中，调用构造方法创建对象是在createBeanInstance()方法这一步，这一步是在populateBean()属性注入方法之前的，由于这个执行顺序，所以不能解决构造方法的循环依赖
+如果要使用二级缓存解决循环依赖，意味着**所有Bean在实例化后就要完成AOP代理**，这样违背了Spring设计的原则，Spring在设计之初就是通过`AnnotationAwareAspectJAutoProxyCreator`这个后置处理器来在Bean生命周期的最后一步来完成AOP代理，而不是在实例化后就立马进行AOP代理
 
-比如：有A、B2个对象，调用构造方法创建实例时，每次都要new一个要构造的实例bean，而A创建时，依赖B，就去创建B，B又依赖了A，继续构造A，如此循环下去 A(B) B(A) A(B)->.....
+
+
+#### 为什么构造器注入循环依赖会报错？
+
+例子1：
+
+```java
+@Component
+public class TestService {
+
+   private UserService userService;
+	
+   @Autowired
+   public TestService(UserService userService){
+       this.userService = userService;
+   }
+}
+
+@Component
+public class UserService {
+
+   private TestService testService;
+	
+   @Lazy // 加上延迟加载，即可解决
+   @Autowired
+   public UserService(TestService testService){
+       this.testService = testService;
+   }
+}
+// @Autowired注解可加可不加
+public void test() {
+   ApplicationContext applicationContext =  new AnnotationConfigApplicationContext(ConfigTest.class);
+}
+
+报错信息
+Caused by: org.springframework.beans.factory.BeanCurrentlyInCreationException: Error creating bean with name 'testService': Requested bean is currently in creation: Is there an unresolvable circular reference?
+....
+```
+
+
+
+原因：
+
+通过构造器注入，在实例化A时，会调用构造方法反射创建对象A，而在创建对象A之前会先实例化构造器传入的参数对象B，这个时候A还没创建，所以不会放入二级缓存，同理，在实例化B的时候，同样也会先实例化构造器传入的参数对象A，此时B也没有创建出来，也不会放入二级缓存，所以会一直这样死循环
+
+而filed注入和Set注入不同的是，A对象会先通过构造器创建对象后，放入二级缓存，再进入属性=B对象的注入，当B去实例化，对A进行属性注入的时候，会从二级缓存取出A的实例注入，所以是没有问题的
+
+**如果要解决，加上@Lazy即可**
 
 
 
