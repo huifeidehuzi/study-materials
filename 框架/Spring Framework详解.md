@@ -55,6 +55,7 @@ Spring其实包含了很多东西，比如AOP、IOC、Test、MVC、CACHE、Groov
    		this.reader = new AnnotatedBeanDefinitionReader(this);
        // 初始化 扫描器，用于扫描传入的basepackages中的类并且注册为BeanDefinition放到BeanDefinitionMap
        // 如：在AnnotationConfigApplicationContext(String... basePackages)中的scan()方法
+          // 下面会有详细介绍，阅读【ClassPathBeanDefinitionScanner】章节
    		this.scanner = new ClassPathBeanDefinitionScanner(this);
    }
    
@@ -353,6 +354,8 @@ Spring其实包含了很多东西，比如AOP、IOC、Test、MVC、CACHE、Groov
    }
    ```
 
+
+
 #### 创建
 
 ##### Spring什么时候创建对象？
@@ -496,6 +499,10 @@ public void myDestroy(){
 
 
 
+
+
+
+
 ### BeanPostProcessor
 
 Spring非常重要的一个扩展点，俗称**后置处理器**，对Spring工厂创建的Bean进行再次加工，Spring中许多地方都用到了，比如对@Autowired的解析，AOP的底层实现等等
@@ -600,6 +607,122 @@ public class MyBeanDefinitionRegistryPostProcessor implements BeanDefinitionRegi
     }
 }
 ```
+
+
+
+### ClassPathBeanDefinitionScanner
+
+在【实例化bean的步骤】章节中有提到过这个类，AnnotationConfigApplicationContext在构造器中new了一个ClassPathBeanDefinitionScanner()，他是一个扫描器，那么它是如何扫描的?
+
+它继承ClassPathScanningCandidateComponentProvider
+
+首先，它会将需要扫描的、需要排除扫描的注解分别放到集合中，待IOC过程中使用
+
+```java
+public ClassPathBeanDefinitionScanner(BeanDefinitionRegistry registry, boolean useDefaultFilters,
+      Environment environment, @Nullable ResourceLoader resourceLoader) {
+   
+    // 是否开启了默认扫描方式，在【@Configuration】章节有介绍
+    if (useDefaultFilters) {
+      // 注册默认的扫描，默认是开启的
+      registerDefaultFilters();
+    }
+    // 省略部分代码
+}
+```
+
+ClassPathScanningCandidateComponentProvider#registerDefaultFilters()
+
+```java
+protected void registerDefaultFilters() {
+   // 将@Component注解添加到集合
+   // 因为@Service、@Controller、@Repository都使用了@@Component，所以都会加入到此集合中
+   // includeFilters存放于ClassPathScanningCandidateComponentProvider
+   this.includeFilters.add(new AnnotationTypeFilter(Component.class));
+   ClassLoader cl = ClassPathScanningCandidateComponentProvider.class.getClassLoader();
+   // 省略部分代码  
+}
+```
+
+然后，在ClassPathBeanDefinitionScanner实现的doScan()方法中，会对配置的basePackages做解析，在【@ComponentScan】章节中有介绍。从这一步开始，后续扫描注册的动作交由ConfigurationClassPostProcessor，在【ConfigurationClassPostProcessor】章节有介绍
+
+```java
+protected Set<BeanDefinitionHolder> doScan(String... basePackages) {
+   Assert.notEmpty(basePackages, "At least one base package must be specified");
+   // 装载需要注册的BeanDefinition
+   Set<BeanDefinitionHolder> beanDefinitions = new LinkedHashSet<>();
+   for (String basePackage : basePackages) {
+      // 重点:在这一步，会找到basePackage下所有的class
+      Set<BeanDefinition> candidates = findCandidateComponents(basePackage);
+      for (BeanDefinition candidate : candidates) {
+         // 将BeanDefinition封装成元数据
+         ScopeMetadata scopeMetadata = this.scopeMetadataResolver.resolveScopeMetadata(candidate);
+         candidate.setScope(scopeMetadata.getScopeName());
+         // 生成beanname
+         String beanName = this.beanNameGenerator.generateBeanName(candidate, this.registry);
+         if (candidate instanceof AbstractBeanDefinition) {
+            postProcessBeanDefinition((AbstractBeanDefinition) candidate, beanName);
+         }
+         if (candidate instanceof AnnotatedBeanDefinition) {
+            AnnotationConfigUtils.processCommonDefinitionAnnotations((AnnotatedBeanDefinition) candidate);
+         }
+         if (checkCandidate(beanName, candidate)) {
+            BeanDefinitionHolder definitionHolder = new BeanDefinitionHolder(candidate, beanName);
+            definitionHolder =
+                  AnnotationConfigUtils.applyScopedProxyMode(scopeMetadata, definitionHolder, this.registry);
+            beanDefinitions.add(definitionHolder);
+            // 注册bean
+            registerBeanDefinition(definitionHolder, this.registry);
+         }
+      }
+   }
+   return beanDefinitions;
+}
+```
+
+ClassPathBeanDefinitionScanner#findCandidateComponents()
+
+```java
+private Set<BeanDefinition> scanCandidateComponents(String basePackage) {
+   Set<BeanDefinition> candidates = new LinkedHashSet<>();
+   try {
+      // 需要扫描的path
+      // 如：classpath*:com/dubbo/producer/service/impl/**/*.class
+      String packageSearchPath = ResourcePatternResolver.CLASSPATH_ALL_URL_PREFIX +
+            resolveBasePackage(basePackage) + '/' + this.resourcePattern;
+      // path下所有的class
+      Resource[] resources = getResourcePatternResolver().getResources(packageSearchPath);
+      for (Resource resource : resources) {
+         if (resource.isReadable()) {
+            try {
+               MetadataReader metadataReader = getMetadataReaderFactory().getMetadataReader(resource);
+               // 判断是否需要注册
+               // 1.加载使用了@Component等注解的类，2.排除不需要注册的类
+               if (isCandidateComponent(metadataReader)) {
+                  // 封装成BeanDefinition
+                  ScannedGenericBeanDefinition sbd = new ScannedGenericBeanDefinition(metadataReader);
+                  sbd.setResource(resource);
+                  sbd.setSource(resource);
+                  if (isCandidateComponent(sbd)) {
+                     if (debugEnabled) {
+                        logger.debug("Identified candidate component class: " + resource);
+                     }
+                     candidates.add(sbd);
+                  }
+               }
+            }
+         }
+      }
+      // 省略部分代码
+   }
+   catch (IOException ex) {
+      throw new BeanDefinitionStoreException("I/O failure during classpath scanning", ex);
+   }
+   return candidates;
+}
+```
+
+后续在ConfigurationClassPostProcessor.parse()方法中会进行扫描和注册的动作
 
 
 
@@ -748,10 +871,6 @@ public PropertyValues postProcessPropertyValues(
 
 
 
-
-
-
-
 **@Resource同理，由CommonAnnotationBeanPostProcessor处理，它也实现了MergedBeanDefinitionPostProcessor**
 
 
@@ -834,9 +953,11 @@ protected final SourceClass doProcessConfigurationClass(ConfigurationClass confi
          sourceClass.getMetadata(), ComponentScans.class, ComponentScan.class);
    if (!componentScans.isEmpty() &&
          !this.conditionEvaluator.shouldSkip(sourceClass.getMetadata(), ConfigurationPhase.REGISTER_BEAN)) {
-      // 循环处理
+      // 循环处理，因为可以配置多个componentScan
       for (AnnotationAttributes componentScan : componentScans) {
          // 扫描到使用了@Component、@Service、@Controller等注册的类
+         // 内部调用了ClassPathBeanDefinitionScanner.doScan()方法
+         // doScan方法在【ClassPathBeanDefinitionScanner】有介绍
          Set<BeanDefinitionHolder> scannedBeanDefinitions =
                this.componentScanParser.parse(componentScan, sourceClass.getMetadata().getClassName());
          // Check the set of scanned definitions for any further config classes and parse recursively if needed
@@ -1479,16 +1600,12 @@ serialnumber:
    }
    ```
    
-
 5. 直接注入
 
    ```java
    @Autowired
    public ApplicationContext applicationContext;
    ```
-
-   
-
 
 
 
