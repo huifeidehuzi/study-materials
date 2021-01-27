@@ -1458,6 +1458,41 @@ serialnumber:
 
 
 
+## 有哪几种方式获取Spring上下文
+
+1. 实现ApplicationContextAware
+
+2. ApplicationContext ap = new ClassPathXmlApplicationContext("applicationContext.xml");
+
+3. ApplicationContext axt = new AnnotationConfigApplicationContext(App.class);
+
+4. Springboot可以通过启动类获取
+
+   
+
+   ```java
+   public class MainApplication {
+     public static void main(String[] args) {
+         ConfigurableApplicationContext context = SpringApplication.run(MainApplication.class, args);
+         SpringContextUtil3.setApplicationContext(context);
+     }
+   }
+   ```
+   
+
+5. 直接注入
+
+   ```java
+   @Autowired
+   public ApplicationContext applicationContext;
+   ```
+
+   
+
+
+
+
+
 ## AOP
 
 Aop是一个标准，Spring AOP 是它的一种实现
