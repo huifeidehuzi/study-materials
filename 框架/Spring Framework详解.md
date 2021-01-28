@@ -908,6 +908,21 @@ public class ConfigurationClassPostProcessor implements BeanDefinitionRegistryPo
 
 ```java
 public void processConfigBeanDefinitions(BeanDefinitionRegistry registry) {
+     // IOC流程开始前，这所有的 BeanDefinitionNames是承载IOC整个流程的几个类
+     // 比如处理@Autowird 和@Resource注解的处理器，启动配置类等
+  	 String[] candidateNames = registry.getBeanDefinitionNames();
+     for (String beanName : candidateNames) {
+			BeanDefinition beanDef = registry.getBeanDefinition(beanName);
+			if (ConfigurationClassUtils.isFullConfigurationClass(beanDef) ||
+					ConfigurationClassUtils.isLiteConfigurationClass(beanDef)) {
+				if (logger.isDebugEnabled()) {
+					logger.debug("Bean definition has already been processed as a configuration class: " + beanDef);
+				}
+			}
+			else if (ConfigurationClassUtils.checkConfigurationClassCandidate(beanDef, this.metadataReaderFactory)) {
+				configCandidates.add(new BeanDefinitionHolder(beanDef, beanName));
+			}
+		}
    // 省略部分代码
    do {
       // 解析各种注解，包含@Bean，主要逻辑在这里
