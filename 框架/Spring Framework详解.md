@@ -622,7 +622,7 @@ public class MyBeanDefinitionRegistryPostProcessor implements BeanDefinitionRegi
 public ClassPathBeanDefinitionScanner(BeanDefinitionRegistry registry, boolean useDefaultFilters,
       Environment environment, @Nullable ResourceLoader resourceLoader) {
    
-    // 是否开启了默认扫描方式，在【@Configuration】章节有介绍
+    // 是否开启了默认扫描方式
     if (useDefaultFilters) {
       // 注册默认的扫描，默认是开启的
       registerDefaultFilters();
@@ -636,7 +636,7 @@ ClassPathScanningCandidateComponentProvider#registerDefaultFilters()
 ```java
 protected void registerDefaultFilters() {
    // 将@Component注解添加到集合
-   // 因为@Service、@Controller、@Repository都使用了@@Component，所以都会加入到此集合中
+   // 因为@Service、@Controller、@Repository都使用了@Component，所以都会加入到此集合中
    // includeFilters存放于ClassPathScanningCandidateComponentProvider
    this.includeFilters.add(new AnnotationTypeFilter(Component.class));
    ClassLoader cl = ClassPathScanningCandidateComponentProvider.class.getClassLoader();
