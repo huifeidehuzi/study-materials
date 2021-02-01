@@ -542,7 +542,7 @@ public class MyBeanPostProcessor implements BeanPostProcessor {
 
 ### BeanFactoryPostProcessor
 
-Spring提供的一个在Bean实例化之前的扩展点，在扫描之后执行，如果开发者想做一些个性化的开发，比如对某些BeanDefinition做一些修改、将自己的一些对象托管给Spring等等之类的，就可以实现此接口
+Spring提供的一个在Bean实例化之前的扩展点，如果开发者想做一些个性化的开发，比如对某些BeanDefinition做一些修改、将自己的一些对象托管给Spring等等之类的，就可以实现此接口
 
 ```java
 public interface BeanFactoryPostProcessor {
@@ -1840,7 +1840,7 @@ commit(TransactionStatus s)：提交
 
 * `TransactionInterceptor` 事务拦截器
 
-```
+```java
 protected Object invokeWithinTransaction(Method method, @Nullable Class<?> targetClass, final InvocationCallback invocation) throws Throwable {
 
 		// 获取事务属性源~
