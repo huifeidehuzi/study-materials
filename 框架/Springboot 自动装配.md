@@ -133,6 +133,7 @@ protected AutoConfigurationEntry getAutoConfigurationEntry(AutoConfigurationMeta
    // 获取@EnableAutoConfiguration的属性，如：exclude(),excludeName（）
    AnnotationAttributes attributes = getAttributes(annotationMetadata);
    // 获取所有需要自动装配Configuration全路径类名
+   // 这里加载出来的有148个（2.x版本）
    List<String> configurations = getCandidateConfigurations(annotationMetadata, attributes);
    // 去除重复的configuration
    configurations = removeDuplicates(configurations);
@@ -145,6 +146,7 @@ protected AutoConfigurationEntry getAutoConfigurationEntry(AutoConfigurationMeta
    configurations = filter(configurations, autoConfigurationMetadata);
    fireAutoConfigurationImportEvents(configurations, exclusions);
    // 返回真正需要自动装配的configuration
+   // 到这里还剩64个
    return new AutoConfigurationEntry(configurations, exclusions);
 }
 ```
