@@ -257,6 +257,8 @@ Spring其实包含了很多东西，比如AOP、IOC、Test、MVC、CACHE、Groov
          // 4.@Autowired和@Resource的属性填充就是在这里完成的
          // 4.1 调用InstantiationAwareBeanPostProcessor#postProcessPropertyValues()方法
          // 5.循环依赖请查看【如何解决循环依赖】章节
+         // 6.如果某个Bean被设置了AutowireMode,就会按注入类型来注入，否则按自动注入来注入
+         // 7.如果某个Bean被设置了AutowireMode，同时也使用了@Autowired或@Resource，则按后者注入
    			populateBean(beanName, mbd, instanceWrapper);
    			if (exposedObject != null) {
            // 对象创建后的初始化动作
@@ -743,7 +745,7 @@ private Set<BeanDefinition> scanCandidateComponents(String basePackage) {
 ### @Autowired实现原理
 
 在对象创建/构造完成后
-通过AutowiredAnnotationBeanPostProcessor后置处理器，解析使用了@Autowired的方法或者字段，封装成AutowiredMethodElement、AutowiredFieldElement，然后进行属性注入
+通过AutowiredAnnotationBeanPostProcessor后置处理器，解析使用了@Autowired的方法或者字段，封装成AutowiredMethodElement、AutowiredFieldElement，进行属性注入
 
 在**【实例化bean的步骤】**章节，doCreateBean方法中的applyMergedBeanDefinitionPostProcessors()方法对@Autowired进行了处理
 
@@ -845,6 +847,25 @@ private InjectionMetadata buildAutowiringMetadata(final Class<?> clazz) {
 ```
 
 **AutowiredMethodElement和AutowiredFieldElement都是继承InjectionMetadata，且实现了inject()方法**
+
+```java
+public class InjectionMetadata {
+   // 内部使用了@Autowired注入属性的类
+   private final Class<?> targetClass;
+   // @Autowired注入的属性
+   private final Collection<InjectedElement> injectedElements;
+}
+
+// 例
+// 1.targetClass = Test.class
+// 2.a和b都会被装在injectedElements中
+public class Test{
+  @Autowired
+  private A a;
+  @Autowired
+  private B b;
+}
+```
 
 在doCreateBean方法中，调用AutowiredAnnotationBeanPostProcessor#postProcessMergedBeanDefinition()执行完后，继续往下走，会执行populateBean()方法进行属性的依赖注入，此方法中会调用InstantiationAwareBeanPostProcessor#postProcessPropertyValues()进行属性注入
 
