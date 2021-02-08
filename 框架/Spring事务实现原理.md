@@ -334,6 +334,34 @@ protected Object invokeWithinTransaction(Method method, Class<?> targetClass, fi
 
 
 
+## 传播行为
+
+| 名称                      | 说明                                                  |
+| ------------------------- | ----------------------------------------------------- |
+| PROPAGATION_REQUIRED      | 如果当前有事务则使用当前事务，反之新建事务            |
+| PROPAGATION_SUPPORTS      | 如果当前有事务则使用当前事务，反之以非事务方式允许    |
+| PROPAGATION_MANDATORY     | 如果当前有事务则使用当前事务，反之抛异常              |
+| PROPAGATION_REQUIRES_NEW  | 如果当前有事务则挂起当前事务，自己新建事务            |
+| PROPAGATION_NOT_SUPPORTED | 以非事务的方式允许，如果当前有事务则挂起              |
+| PROPAGATION_NEVER         | 以非事务方式执行,如果当前有事务,抛异常                |
+| PROPAGATION_NESTED        | 如果当前有事务，则嵌套事务内执行,反之新建一个事务执行 |
+
+
+
+## 隔离级别
+
+| 名称                       | 说明                                         | 备注     |
+| -------------------------- | -------------------------------------------- | -------- |
+| ISOLATION_DEFAULT          | 数据库默认隔离级别                           | 可重复读 |
+| ISOLATION_READ_UNCOMMITTED | 读未提交，造成幻读、脏读、不可重复读         |          |
+| ISOLATION_READ_COMMITTED   | 读已提交，解决了幻读，造成脏读和不可重复读   |          |
+| ISOLATION_REPEATABLE_READ  | 可重复读，解决了脏读和不可重复读，造成了幻读 |          |
+| ISOLATION_SERIALIZABLE     | 串行化，解决了幻读、脏读、不可重复度         | 性能最慢 |
+
+
+
+
+
 ## 事务失效场景
 
 1. @Transactional作用在非public方法上。这是因为TransactionInterceptor事务拦截器会检查方法修饰符，如果非public则直接return，且这种情况不会抛异常
